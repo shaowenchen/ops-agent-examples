@@ -1,0 +1,21 @@
+# Core dependencies
+langchain==0.3.15
+langchain-openai==0.2.14
+langchain-community==0.3.15
+fastmcp==2.12.4
+nest-asyncio==1.6.0
+
+# HTTP client
+httpx==0.28.1
+requests==2.32.3
+
+# Configuration management
+pyyaml==6.0.2
+python-dotenv==1.0.1
+
+# Logging and utilities
+colorlog==6.9.0
+
+# CLI support
+click==8.1.8
+rich==13.9.4

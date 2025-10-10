@@ -1,0 +1,5 @@
+version: "1.0"
+
+tasks:
+  - description: "List available SOPS"
+    intent: "Discover what SOPS procedures are available and show them to me"

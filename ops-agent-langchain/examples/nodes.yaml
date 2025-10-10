@@ -1,0 +1,5 @@
+version: "1.0"
+
+tasks:
+  - description: "Analyze cluster nodes events"
+    intent: "总结分析一下 ops.clusters.*.nodes.*.event 的事件数据"

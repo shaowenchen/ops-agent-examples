@@ -1,0 +1,10 @@
+# Ops Agent Configuration
+
+mcp:
+  server_url: "https://xxx.com/mcp"
+  timeout: "30s"
+  token: ""
+openai:
+  api_key: ""
+  api_host: "https://xxx.com/v1"
+  model: ""
