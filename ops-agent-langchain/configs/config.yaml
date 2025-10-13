@@ -4,7 +4,15 @@ mcp:
   server_url: "https://xxx.com/mcp"
   timeout: "30s"
   token: ""
+
 openai:
   api_key: ""
   api_host: "https://xxx.com/v1"
   model: ""
+  # max_tokens: Maximum tokens for LLM completion (output)
+  # Prevents "Request body too large" errors
+  # Recommended values:
+  #   - gpt-4o-mini: 4000 (auto-detected)
+  #   - gpt-3.5-turbo: 2000
+  #   - gpt-4: 4000
+  max_tokens: 4000

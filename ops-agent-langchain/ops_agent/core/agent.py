@@ -8,7 +8,6 @@ from typing import Dict, List, Any, Optional, Tuple, Union
 
 from langchain_openai import ChatOpenAI
 from langchain.agents import AgentExecutor, create_react_agent
-from langchain.agents.output_parsers import ReActSingleInputOutputParser
 from langchain.prompts import PromptTemplate
 from langchain.schema import SystemMessage, HumanMessage
 from langchain.tools import StructuredTool
@@ -23,67 +22,6 @@ from ..utils.formatting import format_task_result, format_prompt_with_context
 from ..utils.callbacks import DetailedLoggingCallback
 
 logger = get_logger(__name__)
-
-
-class CustomReActOutputParser(ReActSingleInputOutputParser):
-    """Custom parser that properly handles JSON Action Input"""
-    
-    def parse(self, text: str):
-        """Parse LLM output ensuring Action Input is properly parsed"""
-        try:
-            # Call parent parse method
-            result = super().parse(text)
-            
-            # If we have an AgentAction with tool_input
-            if hasattr(result, 'tool_input'):
-                tool_input = result.tool_input
-                
-                # If tool_input is a string that looks like JSON, parse it
-                if isinstance(tool_input, str):
-                    tool_input = tool_input.strip()
-                    
-                    # Try to parse as JSON
-                    if tool_input.startswith('{') and tool_input.endswith('}'):
-                        try:
-                            parsed_input = json.loads(tool_input)
-                            
-                            # Check if any value is itself a JSON string (nested problem)
-                            for key, value in parsed_input.items():
-                                if isinstance(value, str) and value.strip().startswith('{'):
-                                    try:
-                                        # Try to parse the nested JSON
-                                        nested = json.loads(value.strip())
-                                        # If successful, use the nested object instead
-                                        logger.warning(f"Detected nested JSON in parameter '{key}', unwrapping...")
-                                        parsed_input = nested
-                                        break
-                                    except:
-                                        pass
-                            
-                            result.tool_input = parsed_input
-                            logger.info(f"✅ Parsed Action Input: {result.tool_input}")
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"Failed to parse Action Input as JSON: {e}")
-                            logger.warning(f"Raw input: {tool_input}")
-            
-            return result
-        except Exception as e:
-            logger.error(f"Error in custom parser: {e}")
-            raise
-
-
-# Base system prompt for the agent
-SYSTEM_PROMPT_BASE = """You are an intelligent operations assistant. You have access to various tools for operations management.
-
-IMPORTANT RULES:
-- You MUST call tools directly to get real data - DO NOT just describe what you would do
-- Always use the actual available tools provided to you
-- Keep calling tools until you get the actual data and results
-- Present the actual results from tool calls, not just descriptions
-- For multi-step operations, break them down and execute each step
-
-Available tools will be listed below in the tool descriptions.
-"""
 
 
 class OpsAgent:
@@ -302,6 +240,32 @@ class OpsAgent:
         def sync_call_mcp_tool(**kwargs):
             """Sync wrapper for LangChain compatibility"""
             logger.info(f"🔄 Sync wrapper called for {tool_name}")
+            
+            # Fix nested JSON issue before calling tool
+            # Check if any parameter value is a JSON string that should be unwrapped
+            fixed_kwargs = {}
+            for key, value in kwargs.items():
+                if isinstance(value, str) and value.strip().startswith('{'):
+                    try:
+                        # Try to parse as JSON
+                        parsed = json.loads(value.strip())
+                        if isinstance(parsed, dict):
+                            # This is a nested JSON - the whole dict should be the parameters
+                            logger.warning(f"🔧 Detected nested JSON in parameter '{key}'")
+                            logger.warning(f"   Before: {kwargs}")
+                            logger.warning(f"   Unwrapping to: {parsed}")
+                            fixed_kwargs = parsed
+                            break
+                    except json.JSONDecodeError:
+                        # Not valid JSON, keep as string
+                        fixed_kwargs[key] = value
+                else:
+                    fixed_kwargs[key] = value
+            
+            # If we didn't detect nested JSON, use original kwargs
+            if not fixed_kwargs:
+                fixed_kwargs = kwargs
+            
             try:
                 # Try to use existing event loop
                 try:
@@ -309,10 +273,10 @@ class OpsAgent:
                     if loop.is_running():
                         import nest_asyncio
                         nest_asyncio.apply()
-                    return loop.run_until_complete(call_mcp_tool(**kwargs))
+                    return loop.run_until_complete(call_mcp_tool(**fixed_kwargs))
                 except RuntimeError:
                     # No event loop exists, create new one
-                    return asyncio.run(call_mcp_tool(**kwargs))
+                    return asyncio.run(call_mcp_tool(**fixed_kwargs))
             except Exception as e:
                 logger.error(f"Error in sync wrapper for {tool_name}: {str(e)}")
                 logger.exception("Full error:")
@@ -349,15 +313,21 @@ class OpsAgent:
         Returns:
             ChatOpenAI: Configured LLM instance
         """
-        return ChatOpenAI(
-            model=self.openai_config.model,
-            api_key=self.openai_config.api_key,
-            base_url=self.openai_config.api_host,
-            temperature=0,
-            verbose=self.verbose,
-            callbacks=[self.callback],
-            model_kwargs={"tool_choice": "auto"}  # Enable function calling
-        )
+        llm_kwargs = {
+            "model": self.openai_config.model,
+            "api_key": self.openai_config.api_key,
+            "base_url": self.openai_config.api_host,
+            "temperature": 0,
+            "verbose": self.verbose,
+            "callbacks": [self.callback]
+        }
+        
+        # Add max_tokens if configured
+        if self.openai_config.max_tokens:
+            llm_kwargs["max_tokens"] = self.openai_config.max_tokens
+            logger.info(f"🔒 Setting max_tokens limit: {self.openai_config.max_tokens}")
+        
+        return ChatOpenAI(**llm_kwargs)
     
     def _create_agent(self) -> AgentExecutor:
         """
@@ -436,7 +406,15 @@ class OpsAgent:
         prompt = PromptTemplate.from_template(template)
         
         # Create ReAct agent with dynamically loaded tools
+        # Use standard create_react_agent for better stability
         agent = create_react_agent(self.llm, self.tools, prompt)
+        
+        # Create a custom parsing error handler
+        def handle_parsing_error(error: Exception) -> str:
+            """Handle parsing errors gracefully"""
+            error_msg = str(error)
+            logger.warning(f"⚠️  Parsing error: {error_msg}")
+            return f"Invalid format. Please follow the exact format:\nThought: [your reasoning]\nAction: [tool name]\nAction Input: {{json parameters}}\n\nError was: {error_msg}"
         
         # Create agent executor with strict error handling
         return AgentExecutor(
@@ -444,7 +422,7 @@ class OpsAgent:
             tools=self.tools,
             verbose=self.verbose,
             max_iterations=self.max_iterations,
-            handle_parsing_errors="Check your output and make sure it follows the format! Only output Thought, Action, Action Input, or Final Answer. Never write Observation yourself.",
+            handle_parsing_errors=handle_parsing_error,
             callbacks=[self.callback],
             return_intermediate_steps=True,
             early_stopping_method="force"  # Force tool execution
@@ -705,7 +683,7 @@ class OpsAgent:
         # Get available tools information
         available_tools = self._format_available_tools()
         
-        prompt = f"""Based on the following intent, create a detailed execution plan.
+        prompt = f"""Based on the intent, create a CONCISE execution instruction (2-3 sentences max).
 
 Intent: {intent}
 Description: {description}
@@ -715,13 +693,12 @@ Available context: {json.dumps(context, indent=2) if context else "None"}
 AVAILABLE MCP TOOLS:
 {available_tools}
 
-Create a step-by-step plan to achieve this intent. Consider:
-1. What information do you need to gather?
-2. Which of the above tools should you use?
-3. What parameters do you need for each tool?
-4. What is the expected outcome?
+Provide a BRIEF, direct instruction that specifies:
+- Which tool to use
+- What parameters to pass
+- Expected outcome
 
-Provide a clear, actionable plan that specifies which tools to call:"""
+Keep it SHORT and actionable (maximum 3 sentences):"""
         
         try:
             logger.info("\n" + "=" * 80)
@@ -745,28 +722,24 @@ Provide a clear, actionable plan that specifies which tools to call:"""
     
     def _refine_plan(self, intent: str, description: str, accumulated_info: List[Dict]) -> str:
         """Refine plan based on accumulated information"""
-        # Get available tools information
-        available_tools = self._format_available_tools()
+        # Simplified tool list - just names
+        tool_names = [tool.name for tool in self.tools]
         
         previous_attempts = "\n".join([
-            f"Attempt {info['iteration']}: {info['plan'][:100]}... -> Result: {str(info['result'])[:100]}..."
-            for info in accumulated_info[-3:]  # Last 3 attempts
+            f"Try {info['iteration']}: {str(info['result'])[:80]}..."
+            for info in accumulated_info[-2:]  # Last 2 attempts only
         ])
         
-        prompt = f"""Based on previous attempts, refine the execution plan.
+        prompt = f"""Previous attempts failed. Provide a BRIEF alternative approach (1-2 sentences).
 
 Intent: {intent}
-Description: {description}
 
-AVAILABLE MCP TOOLS:
-{available_tools}
+Available tools: {', '.join(tool_names)}
 
-Previous attempts:
+Previous failures:
 {previous_attempts}
 
-What should we try differently to achieve the goal? 
-Consider using different tools or different parameters.
-Provide a refined plan that specifies which tools to use:"""
+What to try differently (be CONCISE):"""
         
         try:
             logger.info("\n" + "=" * 80)
@@ -791,8 +764,36 @@ Provide a refined plan that specifies which tools to use:"""
     def _execute_plan(self, plan: str, context: Dict[str, Any]) -> str:
         """Execute the plan using agent with MCP tools"""
         try:
+            # Extract concise instruction from the plan to avoid overly long prompts
+            # Look for key action phrases or use the first meaningful sentence
+            lines = plan.split('\n')
+            concise_instruction = None
+            
+            # Try to find the core instruction
+            for line in lines[:10]:  # Check first 10 lines
+                line = line.strip()
+                # Look for imperative statements
+                if any(keyword in line.lower() for keyword in ['use', 'call', 'execute', 'list', 'get', 'query', 'search', 'find']):
+                    if len(line) < 200 and not line.startswith('#'):
+                        concise_instruction = line
+                        break
+            
+            # If no concise instruction found, use first non-empty line
+            if not concise_instruction:
+                for line in lines:
+                    line = line.strip()
+                    if line and not line.startswith('#') and len(line) < 300:
+                        concise_instruction = line
+                        break
+            
+            # Fallback to truncated plan
+            if not concise_instruction or len(concise_instruction) < 10:
+                concise_instruction = plan[:300] + "..." if len(plan) > 300 else plan
+            
+            logger.info(f"📋 Simplified instruction: {concise_instruction}")
+            
             response = self.agent_executor.invoke(
-                {"input": plan},
+                {"input": concise_instruction},
                 config={"callbacks": [self.callback]}
             )
             return response.get("output", "")
@@ -928,6 +929,10 @@ Response:"""
         
         tools_list = ", ".join(sorted(tools_used)) if tools_used else "N/A"
         
+        # Truncate final_result if too long for the summary generation prompt
+        result_preview = final_result[:1500] if len(final_result) > 1500 else final_result
+        result_is_truncated = len(final_result) > 1500
+        
         prompt = f"""Generate a comprehensive task execution report in Markdown format.
 
 TASK INFORMATION:
@@ -940,17 +945,17 @@ EXECUTION DETAILS:
 - Tools Used: {tools_list}
 - Final Status: {'✅ Success' if final_result else '⚠️ Incomplete'}
 
-FINAL RESULT:
-{final_result}
+FINAL RESULT ({"PREVIEW - see full result below" if result_is_truncated else "COMPLETE"}):
+{result_preview}
 
 Please generate a well-structured Markdown report with the following sections:
 1. ## 📋 Task Overview
-2. ## 🎯 Objective
+2. ## 🎯 Objective  
 3. ## 🔧 Execution Process (brief, 2-3 points)
-4. ## ✨ Key Findings
+4. ## ✨ Key Findings (extract the most important information from the result)
 5. ## 📊 Summary
 
-Use emojis, bullet points, and clear formatting. Keep it concise but informative.
+Use emojis, bullet points, and clear formatting. Be informative and extract key insights.
 Output ONLY the Markdown, no additional text:"""
         
         try:
@@ -958,7 +963,18 @@ Output ONLY the Markdown, no additional text:"""
             logger.info("📝 GENERATING MARKDOWN SUMMARY")
             logger.info("=" * 80)
             
-            response = self.llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [self.callback]})
+            # Create LLM with higher max_tokens for summary generation
+            summary_llm = ChatOpenAI(
+                model=self.openai_config.model,
+                api_key=self.openai_config.api_key,
+                base_url=self.openai_config.api_host,
+                temperature=0,
+                max_tokens=2000,  # Allow longer summaries
+                verbose=self.verbose,
+                callbacks=[self.callback]
+            )
+            
+            response = summary_llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [self.callback]})
             markdown_summary = response.content
             
             # Clean up any markdown code blocks if LLM wrapped it
@@ -967,12 +983,31 @@ Output ONLY the Markdown, no additional text:"""
             elif markdown_summary.startswith('```'):
                 markdown_summary = markdown_summary.replace('```', '').strip()
             
+            # Append detailed result section if result exists
+            if final_result and len(final_result.strip()) > 0:
+                markdown_summary += "\n\n---\n\n"
+                markdown_summary += "## 📄 Complete Result Details\n\n"
+                
+                # Try to format as JSON if it looks like JSON
+                if final_result.strip().startswith('{') or final_result.strip().startswith('['):
+                    try:
+                        import json
+                        parsed = json.loads(final_result)
+                        formatted_json = json.dumps(parsed, indent=2, ensure_ascii=False)
+                        markdown_summary += "```json\n" + formatted_json + "\n```"
+                    except:
+                        # Not valid JSON, display as text
+                        markdown_summary += "```\n" + final_result + "\n```"
+                else:
+                    # Regular text result
+                    markdown_summary += "```\n" + final_result + "\n```"
+            
             return markdown_summary
             
         except Exception as e:
             logger.error(f"Error generating summary: {e}")
             # Return a basic Markdown summary if generation fails
-            return f"""# 📋 Task Report: {task_name}
+            basic_summary = f"""# 📋 Task Report: {task_name}
 
 ## 🎯 Objective
 {intent}
@@ -982,12 +1017,29 @@ Output ONLY the Markdown, no additional text:"""
 - **Iterations**: {iterations}
 - **Tools Used**: {tools_list}
 
-## ✨ Result
-{final_result[:500] if final_result else 'No result'}
+## ✨ Result Overview
+{final_result[:500] if final_result else 'No result'}...
 
 ---
-*Generated automatically by Ops Agent*
+
+## 📄 Complete Result Details
 """
+            
+            # Add full result
+            if final_result:
+                if final_result.strip().startswith('{') or final_result.strip().startswith('['):
+                    try:
+                        import json
+                        parsed = json.loads(final_result)
+                        formatted_json = json.dumps(parsed, indent=2, ensure_ascii=False)
+                        basic_summary += "```json\n" + formatted_json + "\n```"
+                    except:
+                        basic_summary += "```\n" + final_result + "\n```"
+                else:
+                    basic_summary += "```\n" + final_result + "\n```"
+            
+            basic_summary += "\n\n---\n*Generated automatically by Ops Agent*"
+            return basic_summary
     
     def chat(self, message: str) -> str:
         """

@@ -1,0 +1,13 @@
+# Ops Agent MCP Edition Configuration
+
+# MCP Server Configuration
+mcp:
+  # MCP server URL
+  server_url: "https://your-mcp-server-url.com/mcp"
+  server_name: "mcp-server"
+  
+  # Request timeout
+  timeout: "30s"
+  
+  # Authentication token
+  token: "your-mcp-token-here"

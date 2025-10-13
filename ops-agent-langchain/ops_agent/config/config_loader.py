@@ -23,6 +23,7 @@ class OpenAIConfig:
     api_key: str
     api_host: str
     model: str
+    max_tokens: Optional[int] = None  # Maximum tokens for completion
 
 
 @dataclass
@@ -102,10 +103,24 @@ class ConfigLoader:
         api_host = os.environ.get("OPENAI_API_HOST", openai_config.get("api_host", ""))
         model = os.environ.get("OPENAI_MODEL", openai_config.get("model", "gpt-4"))
         
+        # Load max_tokens with default based on model
+        max_tokens_str = os.environ.get("OPENAI_MAX_TOKENS", openai_config.get("max_tokens"))
+        max_tokens = None
+        if max_tokens_str:
+            try:
+                max_tokens = int(max_tokens_str)
+            except (ValueError, TypeError):
+                max_tokens = None
+        
+        # Set sensible defaults if not specified
+        if max_tokens is None:
+            max_tokens = 1000  # Default for other models
+        
         return OpenAIConfig(
             api_key=api_key,
             api_host=api_host,
-            model=model
+            model=model,
+            max_tokens=max_tokens
         )
     
     def load_tasks(self, task_file: str) -> TaskConfig:
