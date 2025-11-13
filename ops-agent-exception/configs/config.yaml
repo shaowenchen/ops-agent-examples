@@ -1,0 +1,14 @@
+# 异常分析框架配置
+
+# MCP 服务器配置
+mcp:
+  server_url: "https://xxx.com/mcp"
+  timeout: "30s"
+  token: ""
+
+# LLM 配置
+llm:
+  api_key: ""
+  api_host: "https://xxx.com/v1"
+  model: ""
+  max_tokens: 8000
