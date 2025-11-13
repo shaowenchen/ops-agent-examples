@@ -1,0 +1,5 @@
+version: "1.0"
+
+tasks:
+  - description: "Analyze nodes high cpu usage"
+    intent: "总结分析一下 AI 系统下 (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 70 的节点"

@@ -1,49 +1,89 @@
+# -*- coding: utf-8 -*-
 """
-Ops Agent - Task planning and execution engine powered by LangChain
+ReAct Agent - Pure ReAct (Reasoning, Acting, Observing) pattern implementation
+Best practices implementation with improved error handling and performance
 """
 
 import json
 import asyncio
+import re
 from typing import Dict, List, Any, Optional, Tuple, Union
+from dataclasses import dataclass
+from enum import Enum
 
 from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain.prompts import PromptTemplate
-from langchain.schema import SystemMessage, HumanMessage
-from langchain.tools import StructuredTool
+from langchain.schema import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, create_model
-import re
 
 from fastmcp import Client
 
-from ..config import ConfigLoader, TaskConfig
+from ..config import ConfigLoader
 from ..utils.logging import get_logger
-from ..utils.formatting import format_task_result, format_prompt_with_context
+from ..utils.formatting import format_task_result
 from ..utils.callbacks import DetailedLoggingCallback
 
 logger = get_logger(__name__)
 
 
-class OpsAgent:
-    """Ops Agent for task planning and execution"""
+class StepStatus(Enum):
+    """Status of a ReAct step"""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass
+class ReActStep:
+    """Represents a single ReAct step with enhanced metadata"""
+    step_number: int
+    thought: str
+    action: Optional[str] = None
+    action_input: Optional[Dict[str, Any]] = None
+    observation: Optional[str] = None
+    status: StepStatus = StepStatus.PENDING
+    is_final: bool = False
+    final_answer: Optional[str] = None
+    error: Optional[str] = None
+    execution_time: Optional[float] = None
+
+
+class ReActAgent:
+    """
+    Enhanced ReAct (Reasoning, Acting, Observing) Agent with best practices
+    
+    Features:
+    - Pure ReAct pattern implementation
+    - Enhanced error handling and recovery
+    - Performance monitoring
+    - Configurable step limits and timeouts
+    - Detailed logging and debugging
+    - Tool validation and safety checks
+    """
     
     def __init__(
         self,
         config_loader: ConfigLoader,
         verbose: bool = True,
-        max_iterations: int = 20
+        max_steps: int = 10,
+        step_timeout: float = 30.0,
+        enable_tool_validation: bool = True
     ):
         """
-        Initialize Ops Agent
+        Initialize Enhanced ReAct Agent
         
         Args:
             config_loader: Configuration loader instance
             verbose: Enable verbose logging
-            max_iterations: Maximum iterations for agent execution
+            max_steps: Maximum number of ReAct steps
+            step_timeout: Timeout for each step in seconds
+            enable_tool_validation: Enable tool parameter validation
         """
         self.config_loader = config_loader
         self.verbose = verbose
-        self.max_iterations = max_iterations
+        self.max_steps = max_steps
+        self.step_timeout = step_timeout
+        self.enable_tool_validation = enable_tool_validation
         
         # Load configurations
         self.openai_config = config_loader.openai_config
@@ -52,472 +92,656 @@ class OpsAgent:
         # Initialize callback for detailed logging
         self.callback = DetailedLoggingCallback()
         
-        # Initialize LLM
+        # Initialize LLM with optimized settings
         self.llm = self._create_llm()
         
-        # Initialize MCP client - keep it persistent for tool calls
+        # Initialize MCP client
         logger.info(f"Connecting to MCP server: {self.mcp_config.server_url}")
-        self.mcp_client = None
         self.mcp_server_url = self.mcp_config.server_url
         self.mcp_token = self.mcp_config.token
         
-        # Load MCP tools dynamically from server
+        # Load MCP tools dynamically
         self.tools = self._load_mcp_tools()
         logger.info(f"Loaded {len(self.tools)} tools from MCP server")
         
-        # Log available tools
+        # Log available tools with enhanced information
         if self.tools:
             logger.info("=" * 80)
-            logger.info("📦 Available MCP Tools for Agent:")
+            logger.info("📦 Available MCP Tools for ReAct Agent:")
             logger.info("=" * 80)
             for idx, tool in enumerate(self.tools, 1):
-                tool_name = tool.name if hasattr(tool, 'name') else str(tool)
-                tool_desc = tool.description if hasattr(tool, 'description') else 'No description'
-                tool_func = tool.func if hasattr(tool, 'func') else None
-                logger.info(f"{idx}. {tool_name}")
-                logger.info(f"   Description: {tool_desc[:100]}...")
-                logger.info(f"   Has func: {tool_func is not None}")
-                logger.info(f"   Callable: {callable(tool_func) if tool_func else False}")
+                logger.info(f"{idx}. {tool['name']}")
+                logger.info(f"   Description: {tool['description'][:100]}...")
+                if tool.get('input_schema'):
+                    params = tool['input_schema'].get('properties', {})
+                    logger.info(f"   Parameters: {list(params.keys())}")
             logger.info("=" * 80)
         
-        # Initialize agent
-        self.agent_executor = self._create_agent()
-        
-        logger.info("Ops Agent initialized successfully")
+        logger.info("Enhanced ReAct Agent initialized successfully")
     
-    def _load_mcp_tools(self) -> list:
-        """
-        Dynamically load tools from MCP server using fastmcp Client
+    def _create_llm(self) -> ChatOpenAI:
+        """Create optimized LLM instance"""
+        llm_kwargs = {
+            "model": self.openai_config.model,
+            "api_key": self.openai_config.api_key,
+            "base_url": self.openai_config.api_host,
+            "temperature": 0.1,  # Slightly higher for more creative reasoning
+            "verbose": self.verbose,
+            "callbacks": [self.callback]
+        }
         
-        Returns:
-            List of LangChain tools converted from MCP tools
-        """
+        if self.openai_config.max_tokens:
+            llm_kwargs["max_tokens"] = self.openai_config.max_tokens
+        
+        return ChatOpenAI(**llm_kwargs)
+    
+    def _load_mcp_tools(self) -> List[Dict[str, Any]]:
+        """Load tools from MCP server with enhanced error handling"""
         try:
-            # Create async function to connect to MCP server and fetch tools
             async def fetch_tools():
-                # Prepare connection URL with authentication
                 server_url = self.mcp_server_url
-                
-                # Create client with authentication if token is provided
                 client_kwargs = {}
-                if self.mcp_token:
-                    # For SSE MCP servers, token is usually passed in headers
-                    logger.info("Adding authentication token to MCP client")
                 
-                # Connect to MCP server temporarily to fetch tool list
                 logger.info(f"Fetching tools from MCP server: {server_url}")
                 async with Client(server_url, **client_kwargs) as client:
-                    # Dynamically list all available tools from MCP server
                     mcp_tools = await client.list_tools()
                     logger.info(f"✅ Discovered {len(mcp_tools)} tools from MCP server")
                     
-                    # Log each tool
-                    for idx, tool in enumerate(mcp_tools, 1):
-                        logger.info(f"   {idx}. {tool.name}: {tool.description[:80] if tool.description else 'No description'}...")
+                    # Convert to enhanced dict format
+                    tools = []
+                    for tool in mcp_tools:
+                        tools.append({
+                            'name': tool.name,
+                            'description': tool.description or f"Tool: {tool.name}",
+                            'input_schema': tool.inputSchema if hasattr(tool, 'inputSchema') else None,
+                            'mcp_tool': tool  # Keep reference to original tool
+                        })
                     
-                    return mcp_tools
+                    return tools
             
-            # Run async function in event loop
+            # Run async function with proper error handling
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    # If loop is already running, create a new one
                     import nest_asyncio
                     nest_asyncio.apply()
-                    mcp_tools = loop.run_until_complete(fetch_tools())
+                    return loop.run_until_complete(fetch_tools())
                 else:
-                    mcp_tools = loop.run_until_complete(fetch_tools())
+                    return loop.run_until_complete(fetch_tools())
             except RuntimeError:
-                # No event loop, create a new one
-                mcp_tools = asyncio.run(fetch_tools())
-            
-            # Convert MCP tools to LangChain tools
-            # NOTE: Each tool will create its own client connection when called
-            langchain_tools = []
-            for mcp_tool in mcp_tools:
-                langchain_tool = self._convert_mcp_tool_to_langchain(mcp_tool)
-                langchain_tools.append(langchain_tool)
-            
-            return langchain_tools
+                return asyncio.run(fetch_tools())
             
         except Exception as e:
             logger.error(f"❌ Error loading MCP tools: {str(e)}")
             logger.exception("Full error traceback:")
-            logger.warning("Continuing without MCP tools")
             return []
     
-    def _convert_mcp_tool_to_langchain(self, mcp_tool: Any) -> StructuredTool:
-        """
-        Convert MCP tool to LangChain StructuredTool
+    def _validate_tool_parameters(self, tool_name: str, parameters: Dict[str, Any]) -> Tuple[bool, str]:
+        """Validate tool parameters against schema"""
+        if not self.enable_tool_validation:
+            return True, ""
         
-        Args:
-            mcp_tool: MCP tool object from MCP server
-            
-        Returns:
-            LangChain StructuredTool that creates new client connection for each call
-        """
-        tool_name = mcp_tool.name
-        tool_description = mcp_tool.description or f"Tool: {tool_name}"
+        # Find tool schema
+        tool_info = None
+        for tool in self.tools:
+            if tool['name'] == tool_name:
+                tool_info = tool
+                break
         
-        logger.info(f"📦 Converting MCP tool: {tool_name}")
+        if not tool_info or not tool_info.get('input_schema'):
+            return True, ""  # No schema to validate against
         
-        # Create Pydantic model for tool input schema dynamically
-        if hasattr(mcp_tool, 'inputSchema') and mcp_tool.inputSchema:
-            # Extract properties from MCP tool schema
-            properties = mcp_tool.inputSchema.get('properties', {})
-            required_fields = mcp_tool.inputSchema.get('required', [])
-            
-            logger.info(f"   Schema properties: {list(properties.keys())}")
-            logger.info(f"   Required fields: {required_fields}")
-            
-            # Build Pydantic fields
-            field_definitions = {}
-            for field_name, field_info in properties.items():
-                field_type = self._json_type_to_python(field_info.get('type', 'string'))
-                field_desc = field_info.get('description', '')
-                is_required = field_name in required_fields
-                
-                if is_required:
-                    field_definitions[field_name] = (field_type, Field(..., description=field_desc))
-                else:
-                    field_definitions[field_name] = (Optional[field_type], Field(None, description=field_desc))
-            
-            # Create dynamic Pydantic model
-            ArgsSchema = create_model(f"{tool_name}Args", **field_definitions)
-        else:
-            # Default empty schema
-            logger.info(f"   No schema defined, using empty schema")
-            ArgsSchema = create_model(f"{tool_name}Args")
+        schema = tool_info['input_schema']
+        properties = schema.get('properties', {})
+        required = schema.get('required', [])
         
-        # Create wrapper function that creates a new client for each call
-        async def call_mcp_tool(**kwargs):
-            """Async wrapper to call MCP tool - creates new client connection"""
-            logger.info("=" * 80)
-            logger.info(f"🔧 MCP TOOL CALL: {tool_name}")
-            logger.info("=" * 80)
-            logger.info(f"📥 Input parameters: {json.dumps(kwargs, indent=2)}")
-            
-            try:
-                # Create new client connection for this specific call
-                server_url = self.mcp_server_url
-                client_kwargs = {}
-                
-                logger.info(f"🌐 Connecting to MCP server: {server_url}")
-                
-                # Use async with to ensure proper connection management
-                async with Client(server_url, **client_kwargs) as client:
-                    logger.info(f"✅ Connected to MCP server")
-                    logger.info(f"📞 Calling tool: {tool_name} with args: {kwargs}")
-                    
-                    # Call the actual MCP tool
-                    result = await client.call_tool(tool_name, kwargs)
-                    
-                    logger.info(f"✅ Tool call completed")
-                    logger.info(f"📤 Raw result type: {type(result)}")
-                    
-                    # Extract text content from result
-                    if hasattr(result, 'content') and result.content:
-                        extracted = result.content[0].text if hasattr(result.content[0], 'text') else str(result.content[0])
-                        logger.info(f"📤 Extracted result: {extracted[:500]}...")
-                        logger.info("=" * 80)
-                        return extracted
-                    
-                    result_str = str(result)
-                    logger.info(f"📤 String result: {result_str[:500]}...")
-                    logger.info("=" * 80)
-                    return result_str
-                    
-            except Exception as e:
-                logger.error("=" * 80)
-                logger.error(f"❌ ERROR calling MCP tool {tool_name}")
-                logger.error(f"Error type: {type(e).__name__}")
-                logger.error(f"Error message: {str(e)}")
-                logger.exception("Full traceback:")
-                logger.error("=" * 80)
-                return f"Error calling {tool_name}: {str(e)}"
+        # Check required parameters
+        for param in required:
+            if param not in parameters:
+                return False, f"Missing required parameter: {param}"
         
-        # Create sync wrapper for LangChain
-        def sync_call_mcp_tool(**kwargs):
-            """Sync wrapper for LangChain compatibility"""
-            logger.info(f"🔄 Sync wrapper called for {tool_name}")
-            
-            # Fix nested JSON issue before calling tool
-            # Check if any parameter value is a JSON string that should be unwrapped
-            fixed_kwargs = {}
-            for key, value in kwargs.items():
-                if isinstance(value, str) and value.strip().startswith('{'):
-                    try:
-                        # Try to parse as JSON
-                        parsed = json.loads(value.strip())
-                        if isinstance(parsed, dict):
-                            # This is a nested JSON - the whole dict should be the parameters
-                            logger.warning(f"🔧 Detected nested JSON in parameter '{key}'")
-                            logger.warning(f"   Before: {kwargs}")
-                            logger.warning(f"   Unwrapping to: {parsed}")
-                            fixed_kwargs = parsed
-                            break
-                    except json.JSONDecodeError:
-                        # Not valid JSON, keep as string
-                        fixed_kwargs[key] = value
-                else:
-                    fixed_kwargs[key] = value
-            
-            # If we didn't detect nested JSON, use original kwargs
-            if not fixed_kwargs:
-                fixed_kwargs = kwargs
-            
-            try:
-                # Try to use existing event loop
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        import nest_asyncio
-                        nest_asyncio.apply()
-                    return loop.run_until_complete(call_mcp_tool(**fixed_kwargs))
-                except RuntimeError:
-                    # No event loop exists, create new one
-                    return asyncio.run(call_mcp_tool(**fixed_kwargs))
-            except Exception as e:
-                logger.error(f"Error in sync wrapper for {tool_name}: {str(e)}")
-                logger.exception("Full error:")
-                return f"Error: {str(e)}"
+        # Check parameter types
+        for param_name, param_value in parameters.items():
+            if param_name in properties:
+                expected_type = properties[param_name].get('type', 'string')
+                if not self._validate_parameter_type(param_value, expected_type):
+                    return False, f"Parameter '{param_name}' has wrong type. Expected: {expected_type}"
         
-        # Create LangChain StructuredTool
-        langchain_tool = StructuredTool(
-            name=tool_name.replace('_', '-'),  # LangChain prefers hyphens
-            description=tool_description,
-            func=sync_call_mcp_tool,
-            args_schema=ArgsSchema,
-            coroutine=call_mcp_tool  # Support async execution
-        )
-        
-        logger.info(f"✅ Converted tool: {langchain_tool.name}")
-        return langchain_tool
+        return True, ""
     
-    def _json_type_to_python(self, json_type: str) -> type:
-        """Convert JSON schema type to Python type"""
+    def _validate_parameter_type(self, value: Any, expected_type: str) -> bool:
+        """Validate parameter type"""
         type_mapping = {
             'string': str,
-            'number': float,
+            'number': (int, float),
             'integer': int,
             'boolean': bool,
             'array': list,
             'object': dict
         }
-        return type_mapping.get(json_type, str)
+        
+        expected_python_type = type_mapping.get(expected_type, str)
+        if isinstance(expected_python_type, tuple):
+            return isinstance(value, expected_python_type)
+        return isinstance(value, expected_python_type)
     
-    def _create_llm(self) -> ChatOpenAI:
-        """
-        Create LLM instance
-        
-        Returns:
-            ChatOpenAI: Configured LLM instance
-        """
-        llm_kwargs = {
-            "model": self.openai_config.model,
-            "api_key": self.openai_config.api_key,
-            "base_url": self.openai_config.api_host,
-            "temperature": 0,
-            "verbose": self.verbose,
-            "callbacks": [self.callback]
-        }
-        
-        # Add max_tokens if configured
-        if self.openai_config.max_tokens:
-            llm_kwargs["max_tokens"] = self.openai_config.max_tokens
-            logger.info(f"🔒 Setting max_tokens limit: {self.openai_config.max_tokens}")
-        
-        return ChatOpenAI(**llm_kwargs)
-    
-    def _create_agent(self) -> AgentExecutor:
-        """
-        Create LangChain agent with dynamically loaded tools using ReAct pattern
-        
-        Returns:
-            AgentExecutor: Configured agent executor
-        """
-        logger.info(f"Creating agent with {len(self.tools)} tools")
-        
-        # Log tool names for debugging
-        tool_names = [tool.name for tool in self.tools]
-        logger.info(f"Tool names available to agent: {tool_names}")
-        
-         # Create ReAct prompt template - CRITICAL: Model must not generate Observation
-        template = '''You are an intelligent operations assistant. 
- 
- You have access to the following tools:
- 
- {tools}
- 
- CRITICAL INSTRUCTIONS FOR TOOL USAGE:
- 1. When you decide to use a tool, output ONLY these three lines:
-    Thought: [your reasoning]
-    Action: [tool name from the list above]
-    Action Input: [A SINGLE LINE JSON object with parameters]
-    
- 2. After outputting Action Input, STOP IMMEDIATELY
- 3. DO NOT write "Observation:" - the system will execute the tool and show you the result
- 4. Wait for the real tool execution result before continuing
- 5. The system will show you: "Observation: [actual result from tool]"
- 6. Then you can think again and decide next action
- 
- Use this EXACT format:
- 
- Question: the input question you must answer
- Thought: [think about what to do]
- Action: [one of: {tool_names}]
- Action Input: {{"param1": "value1", "param2": "value2"}}
- Observation: [STOP! System fills this - you cannot write this]
- Thought: [think about the observation]
- ... (repeat Thought/Action/Action Input/Observation as needed)
- Thought: I now have enough information
- Final Answer: [your final answer]
- 
- IMPORTANT EXAMPLES FOR ACTION INPUT:
- 
- ✅ CORRECT - Single line JSON object:
- Action Input: {{"subject_pattern": "ops.clusters.*.nodes.*.event", "limit": "100"}}
- 
- ✅ CORRECT - Tool with no parameters:
- Action Input: {{}}
- 
- ✅ CORRECT - Tool with single parameter:
- Action Input: {{"service": "my-service"}}
- 
- ❌ WRONG - Do not wrap JSON in quotes:
- Action Input: "{{\\"param\\": \\"value\\"}}"
- 
- ❌ WRONG - Do not put JSON on multiple lines:
- Action Input: {{
-   "param": "value"
- }}
- 
- REMEMBER: 
- - Action Input must be a SINGLE LINE JSON object
- - Do NOT wrap the JSON in quotes or escape it
- - You MUST call real tools - don't just describe what you would do
- - After "Action Input:", output NOTHING - stop and wait for Observation
- 
- Begin!
- 
- Question: {input}
- Thought:{agent_scratchpad}'''
-        
-        prompt = PromptTemplate.from_template(template)
-        
-        # Create ReAct agent with dynamically loaded tools
-        # Use standard create_react_agent for better stability
-        agent = create_react_agent(self.llm, self.tools, prompt)
-        
-        # Create a custom parsing error handler
-        def handle_parsing_error(error: Exception) -> str:
-            """Handle parsing errors gracefully"""
-            error_msg = str(error)
-            logger.warning(f"⚠️  Parsing error: {error_msg}")
-            return f"Invalid format. Please follow the exact format:\nThought: [your reasoning]\nAction: [tool name]\nAction Input: {{json parameters}}\n\nError was: {error_msg}"
-        
-        # Create agent executor with strict error handling
-        return AgentExecutor(
-            agent=agent,
-            tools=self.tools,
-            verbose=self.verbose,
-            max_iterations=self.max_iterations,
-            handle_parsing_errors=handle_parsing_error,
-            callbacks=[self.callback],
-            return_intermediate_steps=True,
-            early_stopping_method="force"  # Force tool execution
-        )
-    
-    def _generate_tool_descriptions(self) -> str:
-        """
-        Generate a summary of available tools for logging/debugging
-        
-        Returns:
-            String description of available tools
-        """
+    def _format_tools_for_prompt(self) -> str:
+        """Format available tools for inclusion in prompts with enhanced information"""
         if not self.tools:
             return "No tools available"
         
-        descriptions = []
-        for tool in self.tools:
-            name = tool.name if hasattr(tool, 'name') else str(tool)
-            desc = tool.description if hasattr(tool, 'description') else 'No description'
-            descriptions.append(f"  - {name}: {desc}")
-        return "\n".join(descriptions)
-    
-    def _generate_task_name(self, description: str, index: int) -> str:
-        """
-        Generate a clean task name from description
-        
-        Args:
-            description: Task description
-            index: Task index
-            
-        Returns:
-            Clean task name (lowercase, hyphenated)
-        """
-        if not description or description.startswith("Task "):
-            return f"task-{index}"
-        
-        # Convert description to clean name
-        # e.g., "List available SOPS" -> "list-available-sops"
-        import re
-        clean_name = description.lower()
-        clean_name = re.sub(r'[^\w\s-]', '', clean_name)  # Remove special chars
-        clean_name = re.sub(r'\s+', '-', clean_name.strip())  # Replace spaces with hyphens
-        clean_name = re.sub(r'-+', '-', clean_name)  # Remove duplicate hyphens
-        
-        # Limit length
-        if len(clean_name) > 50:
-            clean_name = clean_name[:50].rstrip('-')
-        
-        return clean_name or f"task-{index}"
-    
-    def _format_available_tools(self) -> str:
-        """
-        Format available MCP tools for inclusion in prompts
-        
-        Returns:
-            Formatted string listing all available tools with descriptions and schemas
-        """
-        if not self.tools:
-            return "No MCP tools available"
-        
-        tool_list = []
+        tool_descriptions = []
         for idx, tool in enumerate(self.tools, 1):
-            tool_name = tool.name if hasattr(tool, 'name') else 'unknown'
-            tool_desc = tool.description if hasattr(tool, 'description') else 'No description'
+            name = tool['name']
+            description = tool['description']
             
-            # Get schema info if available
-            schema_info = ""
-            if hasattr(tool, 'args_schema') and tool.args_schema:
-                try:
-                    schema = tool.args_schema.schema()
-                    properties = schema.get('properties', {})
-                    required = schema.get('required', [])
+            # Add parameter information if available
+            params_info = ""
+            if tool.get('input_schema') and tool['input_schema'].get('properties'):
+                properties = tool['input_schema']['properties']
+                required = tool['input_schema'].get('required', [])
+                
+                params = []
+                for param_name, param_info in properties.items():
+                    param_type = param_info.get('type', 'string')
+                    param_desc = param_info.get('description', '')
+                    is_required = param_name in required
+                    req_marker = " (required)" if is_required else " (optional)"
+                    params.append(f"    - {param_name}: {param_type}{req_marker} - {param_desc}")
+                
+                if params:
+                    params_info = f"\n  Parameters:\n" + "\n".join(params)
+            
+            tool_descriptions.append(f"{idx}. {name}\n   Description: {description}{params_info}")
+        
+        return "\n\n".join(tool_descriptions)
+    
+    def _create_react_prompt(self, question: str, steps: List[ReActStep]) -> str:
+        """Create enhanced ReAct prompt with better formatting and instructions"""
+        
+        # Format previous steps
+        previous_steps = ""
+        for step in steps:
+            previous_steps += f"Step {step.step_number}:\n"
+            previous_steps += f"Thought: {step.thought}\n"
+            if step.action:
+                previous_steps += f"Action: {step.action}\n"
+                if step.action_input:
+                    previous_steps += f"Action Input: {json.dumps(step.action_input, ensure_ascii=False)}\n"
+            if step.observation:
+                previous_steps += f"Observation: {step.observation}\n"
+            if step.is_final and step.final_answer:
+                previous_steps += f"Final Answer: {step.final_answer}\n"
+            if step.error:
+                previous_steps += f"Error: {step.error}\n"
+            previous_steps += "\n"
+        
+        # Format available tools
+        available_tools = self._format_tools_for_prompt()
+        
+        prompt = f"""You are a helpful assistant that can use tools to answer questions. You should follow the ReAct (Reasoning, Acting, Observing) pattern.
+
+Available tools:
+{available_tools}
+
+Instructions:
+1. Think step by step about what you need to do
+2. If you need to use a tool, specify the action and input
+3. Wait for the observation before proceeding
+4. Continue until you have enough information to provide a final answer
+5. Be precise with tool parameters and handle errors gracefully
+
+Format your response as follows:
+Thought: [your reasoning about what to do next]
+Action: [tool name, or "None" if no tool needed]
+Action Input: [JSON object with parameters, or "None" if no tool needed]
+
+{previous_steps}Question: {question}
+Thought:"""
+        
+        return prompt
+    
+    def _parse_react_response(self, response: str) -> Tuple[str, Optional[str], Optional[Dict[str, Any]]]:
+        """Parse ReAct response with enhanced error handling"""
+        lines = response.strip().split('\n')
+        
+        thought = ""
+        action = None
+        action_input = None
+        
+        for line in lines:
+            line = line.strip()
+            if line.startswith("Thought:"):
+                thought = line[8:].strip()
+            elif line.startswith("Action:"):
+                action_text = line[7:].strip()
+                if action_text.lower() != "none":
+                    action = action_text
+            elif line.startswith("Action Input:"):
+                input_text = line[13:].strip()
+                if input_text.lower() != "none":
+                    try:
+                        action_input = json.loads(input_text)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse action input as JSON: {input_text}, error: {e}")
+                        # Try to fix common JSON issues
+                        try:
+                            # Handle single quotes
+                            fixed_input = input_text.replace("'", '"')
+                            action_input = json.loads(fixed_input)
+                        except:
+                            action_input = {"input": input_text}
+        
+        return thought, action, action_input
+    
+    async def _call_tool_with_timeout(self, tool_name: str, parameters: Dict[str, Any], max_retries: int = 2) -> str:
+        """Call a specific MCP tool with timeout and retry logic"""
+        logger.info("=" * 80)
+        logger.info(f"🔧 CALLING TOOL: {tool_name}")
+        logger.info("=" * 80)
+        logger.info(f"📥 Parameters: {json.dumps(parameters, indent=2, ensure_ascii=False)}")
+        
+        # Validate parameters first
+        is_valid, error_msg = self._validate_tool_parameters(tool_name, parameters)
+        if not is_valid:
+            return f"Parameter validation error: {error_msg}"
+        
+        # Find the tool
+        tool_info = None
+        for tool in self.tools:
+            if tool['name'] == tool_name:
+                tool_info = tool
+                break
+        
+        if not tool_info:
+            error_msg = f"Tool '{tool_name}' not found"
+            logger.error(error_msg)
+            return error_msg
+        
+        # Retry logic for tool calls
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"🔄 Tool attempt {attempt + 1}/{max_retries}")
+                
+                # Create client and call tool with timeout
+                server_url = self.mcp_server_url
+                client_kwargs = {}
+                
+                async with Client(server_url, **client_kwargs) as client:
+                    logger.info(f"📞 Calling tool: {tool_name}")
                     
-                    if properties:
-                        params = []
-                        for param_name, param_info in properties.items():
-                            param_type = param_info.get('type', 'string')
-                            param_desc = param_info.get('description', '')
-                            is_required = param_name in required
-                            req_marker = " (required)" if is_required else " (optional)"
-                            params.append(f"    - {param_name}: {param_type}{req_marker} - {param_desc}")
-                        
-                        if params:
-                            schema_info = f"\n  Parameters:\n" + "\n".join(params)
+                    # Use asyncio.wait_for for timeout
+                    result = await asyncio.wait_for(
+                        client.call_tool(tool_name, parameters),
+                        timeout=self.step_timeout
+                    )
+                    
+                    # Extract text content from result
+                    if hasattr(result, 'content') and result.content:
+                        extracted = result.content[0].text if hasattr(result.content[0], 'text') else str(result.content[0])
+                        logger.info(f"📤 Result: {extracted[:500]}...")
+                        logger.info("=" * 80)
+                        return extracted
+                    
+                    result_str = str(result)
+                    logger.info(f"📤 Result: {result_str[:500]}...")
+                    logger.info("=" * 80)
+                    return result_str
+                    
+            except asyncio.TimeoutError:
+                logger.warning(f"⏰ Tool timeout on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    wait_time = 1 + attempt  # Short wait for tool retries
+                    logger.info(f"⏳ Waiting {wait_time}s before retry...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    error_msg = f"Tool call timed out after {max_retries} attempts"
+                    logger.error("=" * 80)
+                    logger.error(f"⏰ TIMEOUT: {error_msg}")
+                    logger.error("=" * 80)
+                    return error_msg
+                    
+            except Exception as e:
+                if self._is_recoverable_error(e) and attempt < max_retries - 1:
+                    logger.warning(f"⚠️ Recoverable tool error on attempt {attempt + 1}: {e}")
+                    wait_time = 1 + attempt
+                    logger.info(f"⏳ Waiting {wait_time}s before retry...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    error_msg = f"Error calling tool {tool_name}: {str(e)}"
+                    logger.error("=" * 80)
+                    logger.error(f"❌ {error_msg}")
+                    logger.error("=" * 80)
+                    return error_msg
+        
+        return f"Tool call failed after {max_retries} attempts"
+    
+    def _should_continue(self, steps: List[ReActStep], max_steps: int) -> bool:
+        """Determine if we should continue the ReAct loop with enhanced logic"""
+        if len(steps) >= max_steps:
+            logger.warning(f"Reached maximum steps limit: {max_steps}")
+            return False
+        
+        # Check if the last step was final
+        if steps and steps[-1].is_final:
+            return False
+        
+        # Check for consecutive failures
+        if len(steps) >= 3:
+            recent_steps = steps[-3:]
+            if all(step.error for step in recent_steps):
+                logger.warning("Too many consecutive failures, stopping")
+                return False
+        
+        return True
+    
+    def _extract_final_answer(self, response: str) -> Optional[str]:
+        """Extract final answer from response with improved parsing"""
+        lines = response.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if line.startswith("Final Answer:"):
+                return line[13:].strip()
+        return None
+    
+    def _detect_repetitive_thinking(self, steps: List[ReActStep], current_thought: str) -> bool:
+        """Detect if the agent is stuck in repetitive thinking patterns"""
+        if len(steps) < 3:
+            return False
+        
+        # Check if the current thought is very similar to recent thoughts
+        recent_thoughts = [step.thought for step in steps[-3:] if step.thought]
+        if not recent_thoughts:
+            return False
+        
+        # Simple similarity check - if current thought contains key phrases from recent thoughts
+        current_lower = current_thought.lower()
+        for recent_thought in recent_thoughts:
+            recent_lower = recent_thought.lower()
+            # Check for high similarity (more than 70% overlap in key words)
+            if self._calculate_similarity(current_lower, recent_lower) > 0.7:
+                return True
+        
+        # Check for exact repetition patterns
+        if len(steps) >= 5:
+            last_5_thoughts = [step.thought for step in steps[-5:] if step.thought]
+            if len(set(last_5_thoughts)) <= 2:  # Only 2 unique thoughts in last 5 steps
+                return True
+        
+        return False
+    
+    def _calculate_similarity(self, text1: str, text2: str) -> float:
+        """Calculate simple word-based similarity between two texts"""
+        words1 = set(text1.split())
+        words2 = set(text2.split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+        
+        return len(intersection) / len(union) if union else 0.0
+    
+    def _generate_final_answer_from_context(self, steps: List[ReActStep], question: str) -> str:
+        """Generate a final answer based on the context from previous steps"""
+        # Find the most recent successful tool execution
+        for step in reversed(steps):
+            if step.observation and step.status == StepStatus.COMPLETED:
+                # Extract key information from the observation
+                observation = step.observation
+                
+                # Try to parse JSON responses
+                try:
+                    import json
+                    if observation.startswith('{') and observation.endswith('}'):
+                        data = json.loads(observation)
+                        if 'count' in data:
+                            return f"Found {data['count']} available SOPS procedures. Here are the details: {observation[:500]}..."
+                        elif 'services' in data:
+                            return f"Found {len(data['services'])} services. Here are the details: {observation[:500]}..."
                 except:
                     pass
-            
-            tool_entry = f"{idx}. {tool_name}\n   Description: {tool_desc}{schema_info}"
-            tool_list.append(tool_entry)
+                
+                # For non-JSON responses, return a summary
+                return f"Based on the available information: {observation[:300]}..."
         
-        return "\n\n".join(tool_list)
+        # Fallback answer
+        return f"I have gathered information related to your question: '{question}'. Please see the detailed results above."
+    
+    def _is_recoverable_error(self, error: Exception) -> bool:
+        """Check if an error is recoverable (timeout, network issues, etc.)"""
+        error_str = str(error).lower()
+        recoverable_patterns = [
+            'timeout',
+            '524',
+            'connection',
+            'network',
+            'http',
+            'retry',
+            'temporary'
+        ]
+        return any(pattern in error_str for pattern in recoverable_patterns)
+    
+    async def _get_llm_response_with_retry(self, prompt: str, step_number: int, max_retries: int = 3) -> str:
+        """Get LLM response with retry logic for handling timeouts and network issues"""
+        import asyncio
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"🔄 LLM attempt {attempt + 1}/{max_retries} for step {step_number}")
+                
+                # Use asyncio.wait_for to handle timeouts
+                response = await asyncio.wait_for(
+                    self._call_llm_async(prompt),
+                    timeout=self.step_timeout
+                )
+                return response.content
+                
+            except asyncio.TimeoutError:
+                logger.warning(f"⏰ LLM timeout on attempt {attempt + 1} for step {step_number}")
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff
+                    logger.info(f"⏳ Waiting {wait_time}s before retry...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise Exception(f"LLM timeout after {max_retries} attempts")
+                    
+            except Exception as e:
+                if self._is_recoverable_error(e) and attempt < max_retries - 1:
+                    logger.warning(f"⚠️ Recoverable error on attempt {attempt + 1}: {e}")
+                    wait_time = 2 ** attempt
+                    logger.info(f"⏳ Waiting {wait_time}s before retry...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise e
+        
+        raise Exception(f"Failed to get LLM response after {max_retries} attempts")
+    
+    async def _call_llm_async(self, prompt: str):
+        """Async wrapper for LLM call"""
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def _sync_llm_call():
+            return self.llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [self.callback]})
+        
+        # Run the synchronous LLM call in a thread pool
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as executor:
+            return await loop.run_in_executor(executor, _sync_llm_call)
+    
+    async def execute_react_loop(self, question: str) -> List[ReActStep]:
+        """
+        Execute the enhanced ReAct loop for a given question
+        
+        Args:
+            question: The question to answer
+            
+        Returns:
+            List of ReAct steps taken
+        """
+        steps = []
+        step_number = 1
+        
+        logger.info("🤔 Starting Enhanced ReAct loop...")
+        logger.info(f"Question: {question}")
+        logger.info(f"Max steps: {self.max_steps}, Timeout per step: {self.step_timeout}s")
+        
+        while self._should_continue(steps, self.max_steps):
+            logger.info(f"\n--- ReAct Step {step_number} ---")
+            
+            # Create prompt with current question and previous steps
+            prompt = self._create_react_prompt(question, steps)
+            
+            # Get LLM response with retry logic
+            logger.info("🧠 Getting LLM response...")
+            try:
+                response_text = await self._get_llm_response_with_retry(prompt, step_number)
+                logger.info(f"📝 LLM Response:\n{response_text}")
+                
+            except Exception as e:
+                logger.error(f"Error getting LLM response after retries: {e}")
+                step = ReActStep(
+                    step_number=step_number,
+                    thought="Error getting LLM response",
+                    status=StepStatus.FAILED,
+                    error=str(e)
+                )
+                steps.append(step)
+                break
+            
+            # Parse the response
+            thought, action, action_input = self._parse_react_response(response_text)
+            
+            # Create step
+            step = ReActStep(
+                step_number=step_number,
+                thought=thought,
+                status=StepStatus.IN_PROGRESS
+            )
+            
+            # Check if this is a final answer
+            final_answer = self._extract_final_answer(response_text)
+            if final_answer:
+                step.is_final = True
+                step.final_answer = final_answer
+                step.status = StepStatus.COMPLETED
+                steps.append(step)
+                logger.info(f"✅ Final answer found: {final_answer}")
+                break
+            
+            # Check for repetitive thinking patterns (anti-loop mechanism)
+            if self._detect_repetitive_thinking(steps, thought):
+                logger.warning("🔄 Detected repetitive thinking pattern, forcing final answer")
+                step.is_final = True
+                step.final_answer = self._generate_final_answer_from_context(steps, question)
+                step.status = StepStatus.COMPLETED
+                steps.append(step)
+                logger.info(f"✅ Forced final answer: {step.final_answer}")
+                break
+            
+            # If action is specified, execute it
+            if action:
+                step.action = action
+                step.action_input = action_input
+                
+                logger.info(f"⚙️ Executing action: {action}")
+                if action_input:
+                    logger.info(f"📥 With input: {action_input}")
+                
+                # Call the tool with timeout
+                import time
+                start_time = time.time()
+                try:
+                    observation = await self._call_tool_with_timeout(action, action_input or {})
+                    step.observation = observation
+                    step.status = StepStatus.COMPLETED
+                    step.execution_time = time.time() - start_time
+                    
+                    logger.info(f"👁️ Observation: {observation[:200]}...")
+                    logger.info(f"⏱️ Execution time: {step.execution_time:.2f}s")
+                    
+                except Exception as e:
+                    step.status = StepStatus.FAILED
+                    step.error = str(e)
+                    step.execution_time = time.time() - start_time
+                    logger.error(f"❌ Tool execution failed: {e}")
+            else:
+                logger.info("ℹ️ No action specified, continuing with reasoning...")
+                step.status = StepStatus.COMPLETED
+            
+            steps.append(step)
+            step_number += 1
+        
+        if not steps or not steps[-1].is_final:
+            logger.warning(f"⚠️ ReAct loop completed without final answer after {len(steps)} steps")
+        
+        return steps
+    
+    def execute_question(self, question: str) -> Dict[str, Any]:
+        """
+        Execute a question using enhanced ReAct pattern
+        
+        Args:
+            question: The question to answer
+            
+        Returns:
+            Execution result with enhanced metadata
+        """
+        try:
+            # Run the ReAct loop
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import nest_asyncio
+                    nest_asyncio.apply()
+                    steps = loop.run_until_complete(self.execute_react_loop(question))
+                else:
+                    steps = loop.run_until_complete(self.execute_react_loop(question))
+            except RuntimeError:
+                steps = asyncio.run(self.execute_react_loop(question))
+            
+            # Extract final result
+            final_answer = None
+            if steps and steps[-1].is_final:
+                final_answer = steps[-1].final_answer
+            elif steps and steps[-1].observation:
+                final_answer = steps[-1].observation
+            
+            # Calculate statistics
+            total_time = sum(step.execution_time or 0 for step in steps)
+            successful_steps = sum(1 for step in steps if step.status == StepStatus.COMPLETED)
+            failed_steps = sum(1 for step in steps if step.status == StepStatus.FAILED)
+            
+            # Format result
+            return {
+                "status": "success" if final_answer else "partial",
+                "final_answer": final_answer,
+                "steps": steps,
+                "total_steps": len(steps),
+                "successful_steps": successful_steps,
+                "failed_steps": failed_steps,
+                "total_execution_time": total_time,
+                "average_step_time": total_time / len(steps) if steps else 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error executing question: {str(e)}")
+            return {
+                "status": "failed",
+                "error": str(e),
+                "steps": [],
+                "total_steps": 0,
+                "successful_steps": 0,
+                "failed_steps": 0,
+                "total_execution_time": 0,
+                "average_step_time": 0
+            }
     
     def execute_tasks(self, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Execute a list of tasks using autonomous planning and execution loop
+        Execute a list of tasks using enhanced ReAct pattern
         
         Args:
             tasks: List of task configurations with 'intent' and 'description'
@@ -526,567 +750,95 @@ class OpsAgent:
             List of task execution results
         """
         results = []
-        task_context = {}
         
         for idx, task in enumerate(tasks, 1):
-            # Auto-generate task name from description or use index
             task_description = task.get("description", f"Task {idx}")
-            task_name = self._generate_task_name(task_description, idx)
             task_intent = task.get("intent", task_description)
             
             logger.info(f"\n{'='*80}")
-            logger.info(f"🎯 Task {idx}: {task_description}")
+            logger.info(f"🎯 ReAct Task {idx}: {task_description}")
             logger.info(f"   Intent: {task_intent}")
             logger.info(f"{'='*80}\n")
             
             try:
-                # Execute task with autonomous planning loop
-                result = self._execute_task_with_planning(
-                    task_name=task_name,
-                    intent=task_intent,
-                    description=task_description,
-                    context=task_context
+                # Execute using ReAct pattern
+                result = self.execute_question(task_intent)
+                
+                # Format result for consistency
+                formatted_result = format_task_result(
+                    task_name=f"react-task-{idx}",
+                    status=result["status"],
+                    result={
+                        "output": result.get("final_answer", ""),
+                        "steps": result.get("steps", []),
+                        "total_steps": result.get("total_steps", 0),
+                        "successful_steps": result.get("successful_steps", 0),
+                        "failed_steps": result.get("failed_steps", 0),
+                        "total_execution_time": result.get("total_execution_time", 0),
+                        "average_step_time": result.get("average_step_time", 0),
+                        "summary": self._generate_react_summary(task_intent, result)
+                    }
                 )
                 
-                results.append(result)
-                
-                # Store result in context for dependent tasks
-                task_context[task_name] = result.get("result", {})
-                
-                logger.info(f"✅ Task '{task_name}' completed: {result['status']}\n")
+                results.append(formatted_result)
+                logger.info(f"✅ ReAct Task {idx} completed: {result['status']}")
+                logger.info(f"   Steps: {result.get('total_steps', 0)}")
+                logger.info(f"   Time: {result.get('total_execution_time', 0):.2f}s")
                 
             except Exception as e:
-                logger.error(f"❌ Error executing task '{task_name}': {str(e)}")
-                result = format_task_result(task_name, "failed", {"error": str(e)})
+                logger.error(f"❌ Error executing ReAct task {idx}: {str(e)}")
+                result = format_task_result(f"react-task-{idx}", "failed", {"error": str(e)})
                 results.append(result)
         
         return results
     
-    def _execute_task_with_planning(
-        self,
-        task_name: str,
-        intent: str,
-        description: str,
-        context: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Execute a single task using autonomous planning and iterative refinement loop
+    def _generate_react_summary(self, intent: str, result: Dict[str, Any]) -> str:
+        """Generate an enhanced summary of the ReAct execution"""
+        steps = result.get("steps", [])
+        final_answer = result.get("final_answer", "")
+        total_steps = result.get("total_steps", 0)
+        successful_steps = result.get("successful_steps", 0)
+        failed_steps = result.get("failed_steps", 0)
+        total_time = result.get("total_execution_time", 0)
+        avg_time = result.get("average_step_time", 0)
         
-        This implements an agentic loop:
-        1. Generate a plan based on intent
-        2. Execute the plan using available MCP tools
-        3. Evaluate if the result meets expectations
-        4. If not satisfied, gather more information and refine
-        5. Loop until goal is achieved or max iterations reached
-        
-        Args:
-            task_name: Name of the task
-            intent: User's intent/goal for this task
-            description: Task description
-            context: Execution context from previous tasks
-            
-        Returns:
-            Task execution result
-        """
-        max_refinement_iterations = 5
-        iteration = 0
-        accumulated_info = []
-        final_result = None
-        
-        logger.info("🤔 Starting autonomous planning and execution loop...")
-        
-        while iteration < max_refinement_iterations:
-            iteration += 1
-            logger.info(f"\n--- Iteration {iteration}/{max_refinement_iterations} ---")
-            
-            # Step 1: Generate or refine plan based on current information
-            if iteration == 1:
-                logger.info("📋 Step 1: Generating initial execution plan...")
-                plan = self._generate_plan(intent, description, context)
-            else:
-                logger.info("📋 Step 1: Refining plan based on gathered information...")
-                plan = self._refine_plan(intent, description, accumulated_info)
-            
-            logger.info(f"   Plan: {plan[:200]}...")
-            
-            # Step 2: Execute the plan
-            logger.info("⚙️  Step 2: Executing plan with MCP tools...")
-            execution_result = self._execute_plan(plan, context)
-            accumulated_info.append({
-                "iteration": iteration,
-                "plan": plan,
-                "result": execution_result
-            })
-            
-            logger.info(f"   Execution completed")
-            
-            # Step 3: Evaluate if result meets expectations
-            logger.info("✓  Step 3: Evaluating if goal is achieved...")
-            is_satisfied, evaluation = self._evaluate_result(
-                intent=intent,
-                result=execution_result,
-                iteration=iteration
-            )
-            
-            logger.info(f"   Evaluation: {evaluation[:150]}...")
-            
-            if is_satisfied:
-                logger.info("🎉 Goal achieved! Task completed successfully.")
-                final_result = execution_result
-                break
-            else:
-                logger.info("🔄 Goal not yet achieved, gathering more information...")
-                # Step 4: Determine what additional information is needed
-                additional_needs = self._determine_additional_needs(
-                    intent=intent,
-                    current_result=execution_result,
-                    evaluation=evaluation
-                )
-                logger.info(f"   Additional needs: {additional_needs[:150]}...")
-                
-                if iteration < max_refinement_iterations:
-                    logger.info("   Proceeding to next iteration...\n")
-        
-        # Final result
-        if final_result is None:
-            logger.warning(f"⚠️  Max iterations ({max_refinement_iterations}) reached")
-            final_result = accumulated_info[-1]["result"] if accumulated_info else "No result"
-        
-        # Generate task summary
-        logger.info("\n" + "=" * 80)
-        logger.info("📊 TASK SUMMARY")
-        logger.info("=" * 80)
-        summary = self._generate_task_summary(
-            task_name=task_name,
-            intent=intent,
-            description=description,
-            final_result=final_result,
-            iterations=iteration,
-            accumulated_info=accumulated_info
-        )
-        logger.info(summary)
-        logger.info("=" * 80 + "\n")
-        
-        return format_task_result(
-            task_name=task_name,
-            status="success" if final_result else "partial",
-            result={
-                "output": final_result,
-                "iterations": iteration,
-                "summary": summary,
-                "all_attempts": accumulated_info
-            }
-        )
-    
-    def _generate_plan(self, intent: str, description: str, context: Dict[str, Any]) -> str:
-        """Generate initial execution plan based on intent"""
-        # Get available tools information
-        available_tools = self._format_available_tools()
-        
-        prompt = f"""Based on the intent, create a CONCISE execution instruction (2-3 sentences max).
+        summary = f"""# 📋 Enhanced ReAct Execution Summary
 
-Intent: {intent}
-Description: {description}
-
-Available context: {json.dumps(context, indent=2) if context else "None"}
-
-AVAILABLE MCP TOOLS:
-{available_tools}
-
-Provide a BRIEF, direct instruction that specifies:
-- Which tool to use
-- What parameters to pass
-- Expected outcome
-
-Keep it SHORT and actionable (maximum 3 sentences):"""
-        
-        try:
-            logger.info("\n" + "=" * 80)
-            logger.info("🧠 PLANNING - Generating Execution Plan")
-            logger.info("=" * 80)
-            logger.info(f"📝 Prompt:\n{prompt}")
-            logger.info("=" * 80)
-            
-            response = self.llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [self.callback]})
-            
-            logger.info("\n" + "=" * 80)
-            logger.info("📋 PLAN Generated:")
-            logger.info("=" * 80)
-            logger.info(response.content)
-            logger.info("=" * 80 + "\n")
-            
-            return response.content
-        except Exception as e:
-            logger.error(f"Error generating plan: {e}")
-            return f"Execute intent: {intent}"
-    
-    def _refine_plan(self, intent: str, description: str, accumulated_info: List[Dict]) -> str:
-        """Refine plan based on accumulated information"""
-        # Simplified tool list - just names
-        tool_names = [tool.name for tool in self.tools]
-        
-        previous_attempts = "\n".join([
-            f"Try {info['iteration']}: {str(info['result'])[:80]}..."
-            for info in accumulated_info[-2:]  # Last 2 attempts only
-        ])
-        
-        prompt = f"""Previous attempts failed. Provide a BRIEF alternative approach (1-2 sentences).
-
-Intent: {intent}
-
-Available tools: {', '.join(tool_names)}
-
-Previous failures:
-{previous_attempts}
-
-What to try differently (be CONCISE):"""
-        
-        try:
-            logger.info("\n" + "=" * 80)
-            logger.info("🔄 PLANNING - Refining Execution Plan")
-            logger.info("=" * 80)
-            logger.info(f"📝 Prompt:\n{prompt}")
-            logger.info("=" * 80)
-            
-            response = self.llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [self.callback]})
-            
-            logger.info("\n" + "=" * 80)
-            logger.info("📋 REFINED PLAN:")
-            logger.info("=" * 80)
-            logger.info(response.content)
-            logger.info("=" * 80 + "\n")
-            
-            return response.content
-        except Exception as e:
-            logger.error(f"Error refining plan: {e}")
-            return f"Continue working on: {intent}"
-    
-    def _execute_plan(self, plan: str, context: Dict[str, Any]) -> str:
-        """Execute the plan using agent with MCP tools"""
-        try:
-            # Extract concise instruction from the plan to avoid overly long prompts
-            # Look for key action phrases or use the first meaningful sentence
-            lines = plan.split('\n')
-            concise_instruction = None
-            
-            # Try to find the core instruction
-            for line in lines[:10]:  # Check first 10 lines
-                line = line.strip()
-                # Look for imperative statements
-                if any(keyword in line.lower() for keyword in ['use', 'call', 'execute', 'list', 'get', 'query', 'search', 'find']):
-                    if len(line) < 200 and not line.startswith('#'):
-                        concise_instruction = line
-                        break
-            
-            # If no concise instruction found, use first non-empty line
-            if not concise_instruction:
-                for line in lines:
-                    line = line.strip()
-                    if line and not line.startswith('#') and len(line) < 300:
-                        concise_instruction = line
-                        break
-            
-            # Fallback to truncated plan
-            if not concise_instruction or len(concise_instruction) < 10:
-                concise_instruction = plan[:300] + "..." if len(plan) > 300 else plan
-            
-            logger.info(f"📋 Simplified instruction: {concise_instruction}")
-            
-            response = self.agent_executor.invoke(
-                {"input": concise_instruction},
-                config={"callbacks": [self.callback]}
-            )
-            return response.get("output", "")
-        except Exception as e:
-            logger.error(f"Error executing plan: {e}")
-            return f"Error: {str(e)}"
-    
-    def _evaluate_result(self, intent: str, result: str, iteration: int) -> Tuple[bool, str]:
-        """Evaluate if the result meets the intent expectations"""
-        prompt = f"""Evaluate if the following result satisfies the intended goal.
-
-Intent/Goal: {intent}
-
-Current Result:
-{result}
-
-Iteration: {iteration}
-
-Answer with:
-1. SATISFIED or NOT_SATISFIED
-2. Brief explanation of your evaluation
-
-Format:
-Status: [SATISFIED/NOT_SATISFIED]
-Reason: [Your explanation]"""
-        
-        try:
-            logger.info("\n" + "=" * 80)
-            logger.info("✅ EVALUATION - Checking Goal Achievement")
-            logger.info("=" * 80)
-            logger.info(f"📝 Prompt:\n{prompt}")
-            logger.info("=" * 80)
-            
-            response = self.llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [self.callback]})
-            evaluation = response.content
-            
-            is_satisfied = "SATISFIED" in evaluation.upper() and "NOT_SATISFIED" not in evaluation.upper()
-            
-            logger.info("\n" + "=" * 80)
-            logger.info(f"📊 EVALUATION RESULT: {'✅ SATISFIED' if is_satisfied else '❌ NOT SATISFIED'}")
-            logger.info("=" * 80)
-            logger.info(evaluation)
-            logger.info("=" * 80 + "\n")
-            
-            return is_satisfied, evaluation
-        except Exception as e:
-            logger.error(f"Error evaluating result: {e}")
-            # If evaluation fails, consider it satisfied to avoid infinite loops
-            return True, f"Evaluation error: {e}"
-    
-    def _determine_additional_needs(
-        self,
-        intent: str,
-        current_result: str,
-        evaluation: str
-    ) -> str:
-        """Determine what additional information or actions are needed"""
-        # Get available tools information
-        available_tools = self._format_available_tools()
-        
-        prompt = f"""Based on the evaluation, determine what additional information or actions are needed.
-
-Intent: {intent}
-
-Current Result:
-{current_result}
-
-Evaluation:
-{evaluation}
-
-AVAILABLE MCP TOOLS:
-{available_tools}
-
-What specific information or actions would help achieve the goal? Be specific about:
-1. Which of the above MCP tools to use
-2. What parameters to provide for each tool
-3. What information to look for in the results
-
-Response:"""
-        
-        try:
-            logger.info("\n" + "=" * 80)
-            logger.info("🔍 ANALYSIS - Determining Additional Needs")
-            logger.info("=" * 80)
-            logger.info(f"📝 Prompt:\n{prompt}")
-            logger.info("=" * 80)
-            
-            response = self.llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [self.callback]})
-            
-            logger.info("\n" + "=" * 80)
-            logger.info("📋 ADDITIONAL NEEDS:")
-            logger.info("=" * 80)
-            logger.info(response.content)
-            logger.info("=" * 80 + "\n")
-            
-            return response.content
-        except Exception as e:
-            logger.error(f"Error determining needs: {e}")
-            return "Try gathering more information using available tools"
-    
-    def _generate_task_summary(
-        self,
-        task_name: str,
-        intent: str,
-        description: str,
-        final_result: str,
-        iterations: int,
-        accumulated_info: List[Dict]
-    ) -> str:
-        """
-        Generate a comprehensive summary of task execution in Markdown format
-        
-        Args:
-            task_name: Name of the task
-            intent: Original intent
-            description: Task description
-            final_result: Final execution result
-            iterations: Number of iterations executed
-            accumulated_info: All iteration information
-            
-        Returns:
-            Formatted summary in Markdown
-        """
-        # Collect tools used
-        tools_used = set()
-        for info in accumulated_info:
-            result_text = str(info.get('result', ''))
-            # Try to extract tool names from the result
-            if 'Action:' in result_text:
-                import re
-                actions = re.findall(r'Action:\s*(\S+)', result_text)
-                tools_used.update(actions)
-        
-        tools_list = ", ".join(sorted(tools_used)) if tools_used else "N/A"
-        
-        # Truncate final_result if too long for the summary generation prompt
-        result_preview = final_result[:1500] if len(final_result) > 1500 else final_result
-        result_is_truncated = len(final_result) > 1500
-        
-        prompt = f"""Generate a comprehensive task execution report in Markdown format.
-
-TASK INFORMATION:
-- Task Name: {task_name}
-- Description: {description}
-- User Intent: {intent}
-
-EXECUTION DETAILS:
-- Total Iterations: {iterations}
-- Tools Used: {tools_list}
-- Final Status: {'✅ Success' if final_result else '⚠️ Incomplete'}
-
-FINAL RESULT ({"PREVIEW - see full result below" if result_is_truncated else "COMPLETE"}):
-{result_preview}
-
-Please generate a well-structured Markdown report with the following sections:
-1. ## 📋 Task Overview
-2. ## 🎯 Objective  
-3. ## 🔧 Execution Process (brief, 2-3 points)
-4. ## ✨ Key Findings (extract the most important information from the result)
-5. ## 📊 Summary
-
-Use emojis, bullet points, and clear formatting. Be informative and extract key insights.
-Output ONLY the Markdown, no additional text:"""
-        
-        try:
-            logger.info("\n" + "=" * 80)
-            logger.info("📝 GENERATING MARKDOWN SUMMARY")
-            logger.info("=" * 80)
-            
-            # Create LLM with higher max_tokens for summary generation
-            summary_llm = ChatOpenAI(
-                model=self.openai_config.model,
-                api_key=self.openai_config.api_key,
-                base_url=self.openai_config.api_host,
-                temperature=0,
-                max_tokens=2000,  # Allow longer summaries
-                verbose=self.verbose,
-                callbacks=[self.callback]
-            )
-            
-            response = summary_llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [self.callback]})
-            markdown_summary = response.content
-            
-            # Clean up any markdown code blocks if LLM wrapped it
-            if markdown_summary.startswith('```markdown'):
-                markdown_summary = markdown_summary.replace('```markdown', '').replace('```', '').strip()
-            elif markdown_summary.startswith('```'):
-                markdown_summary = markdown_summary.replace('```', '').strip()
-            
-            # Append detailed result section if result exists
-            if final_result and len(final_result.strip()) > 0:
-                markdown_summary += "\n\n---\n\n"
-                markdown_summary += "## 📄 Complete Result Details\n\n"
-                
-                # Try to format as JSON if it looks like JSON
-                if final_result.strip().startswith('{') or final_result.strip().startswith('['):
-                    try:
-                        import json
-                        parsed = json.loads(final_result)
-                        formatted_json = json.dumps(parsed, indent=2, ensure_ascii=False)
-                        markdown_summary += "```json\n" + formatted_json + "\n```"
-                    except:
-                        # Not valid JSON, display as text
-                        markdown_summary += "```\n" + final_result + "\n```"
-                else:
-                    # Regular text result
-                    markdown_summary += "```\n" + final_result + "\n```"
-            
-            return markdown_summary
-            
-        except Exception as e:
-            logger.error(f"Error generating summary: {e}")
-            # Return a basic Markdown summary if generation fails
-            basic_summary = f"""# 📋 Task Report: {task_name}
-
-## 🎯 Objective
+## 🎯 Intent
 {intent}
 
-## 📊 Status
-- **Status**: {'✅ Completed' if final_result else '⚠️ Incomplete'}
-- **Iterations**: {iterations}
-- **Tools Used**: {tools_list}
+## 📊 Execution Statistics
+- **Total Steps**: {total_steps}
+- **Successful Steps**: {successful_steps}
+- **Failed Steps**: {failed_steps}
+- **Total Execution Time**: {total_time:.2f}s
+- **Average Step Time**: {avg_time:.2f}s
 
-## ✨ Result Overview
-{final_result[:500] if final_result else 'No result'}...
-
----
-
-## 📄 Complete Result Details
+## 🔄 ReAct Steps ({total_steps} total)
 """
-            
-            # Add full result
-            if final_result:
-                if final_result.strip().startswith('{') or final_result.strip().startswith('['):
-                    try:
-                        import json
-                        parsed = json.loads(final_result)
-                        formatted_json = json.dumps(parsed, indent=2, ensure_ascii=False)
-                        basic_summary += "```json\n" + formatted_json + "\n```"
-                    except:
-                        basic_summary += "```\n" + final_result + "\n```"
-                else:
-                    basic_summary += "```\n" + final_result + "\n```"
-            
-            basic_summary += "\n\n---\n*Generated automatically by Ops Agent*"
-            return basic_summary
-    
-    def chat(self, message: str) -> str:
-        """
-        Process a chat message
         
-        Args:
-            message: User message
+        for step in steps:
+            summary += f"\n### Step {step.step_number}\n"
+            summary += f"**Thought:** {step.thought}\n"
+            summary += f"**Status:** {step.status.value}\n"
             
-        Returns:
-            Agent response
-        """
-        try:
-            response = self.agent_executor.invoke(
-                {"input": message},
-                config={"callbacks": [self.callback]}
-            )
-            return response.get("output", "")
-        except Exception as e:
-            logger.error(f"Error in chat: {str(e)}")
-            return f"Error: {str(e)}"
-    
-    def plan_and_execute(self, intent: str) -> Dict[str, Any]:
-        """
-        Plan and execute a task based on natural language intent
+            if step.action:
+                summary += f"**Action:** {step.action}\n"
+                if step.action_input:
+                    summary += f"**Action Input:** {json.dumps(step.action_input, indent=2, ensure_ascii=False)}\n"
+            
+            if step.observation:
+                summary += f"**Observation:** {step.observation[:200]}...\n"
+            
+            if step.error:
+                summary += f"**Error:** {step.error}\n"
+            
+            if step.execution_time:
+                summary += f"**Execution Time:** {step.execution_time:.2f}s\n"
+            
+            if step.is_final and step.final_answer:
+                summary += f"**Final Answer:** {step.final_answer}\n"
         
-        Args:
-            intent: Natural language intent
-            
-        Returns:
-            Execution result
-        """
-        try:
-            # Execute intent
-            response = self.agent_executor.invoke(
-                {"input": intent},
-                config={"callbacks": [self.callback]}
-            )
-            output = response.get("output", "")
-            
-            return {
-                "status": "success",
-                "plan": response.get("intermediate_steps", []),
-                "result": output
-            }
-        except Exception as e:
-            logger.error(f"Error executing intent: {str(e)}")
-            return {
-                "status": "failed",
-                "error": str(e)
-            }
+        summary += f"\n## ✨ Final Result\n{final_answer}\n"
+        
+        return summary

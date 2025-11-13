@@ -6,7 +6,7 @@ __version__ = "1.0.0"
 __author__ = "Ops Team"
 
 from .config import ConfigLoader
-from .core.agent import OpsAgent
+from .core.agent import ReActAgent
 
-__all__ = ["ConfigLoader", "OpsAgent", "__version__"]
+__all__ = ["ConfigLoader", "ReActAgent", "__version__"]
 

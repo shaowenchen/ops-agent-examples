@@ -15,4 +15,4 @@ openai:
   #   - gpt-4o-mini: 4000 (auto-detected)
   #   - gpt-3.5-turbo: 2000
   #   - gpt-4: 4000
-  max_tokens: 4000
+  max_tokens: 8000
