@@ -50,30 +50,41 @@ class AnomalyPointDiscoverer:
         Returns:
             发现的异常点列表
         """
-        logger.info(f"开始发现异常点，输入异常点数量: {len(anomaly_points)}")
+        logger.info(f"[步骤4] 开始发现异常点")
+        logger.info(f"  输入异常点数量: {len(anomaly_points)}")
+        logger.info(f"  异常类型: [{anomaly_type.entity_type}] {anomaly_type.type_name}")
         
         # TODO: 实现异常点发现逻辑
         # 1. 根据最小置信度过滤异常点
         #    min_confidence = 0.6  # 默认最小置信度
+        #    logger.info(f"  根据最小置信度 {min_confidence:.2%} 过滤异常点...")
         #    filtered_points = [
         #        p for p in anomaly_points 
         #        if p.confidence >= min_confidence
         #    ]
+        #    logger.info(f"  过滤后剩余 {len(filtered_points)} 个异常点")
         # 
         # 2. 对异常点进行排序（按置信度降序）
+        #    logger.info(f"  按置信度降序排序...")
         #    sorted_points = sorted(
         #        filtered_points, 
         #        key=lambda x: x.confidence, 
         #        reverse=True
         #    )
+        #    logger.info(f"  排序完成")
         # 
         # 3. 为每个异常点生成推荐建议
         #    discovered_points = []
-        #    for point in sorted_points:
+        #    for idx, point in enumerate(sorted_points, 1):
+        #        logger.info(f"  处理异常点 {idx}/{len(sorted_points)}: {point.entity_type}/{point.entity_name}")
+        #        logger.info(f"    置信度: {point.confidence:.2%}, 置信区间: {point.confidence_interval}")
+        #        
+        #        logger.info(f"    生成推荐建议...")
         #        recommendations = self._generate_recommendations(
         #            point, 
         #            anomaly_type
         #        )
+        #        logger.info(f"    生成 {len(recommendations)} 条推荐建议")
         #        
         #        discovered_point = DiscoveredAnomalyPoint(
         #            entity_id=point.entity_id,
@@ -87,10 +98,15 @@ class AnomalyPointDiscoverer:
         #            metadata=point.metadata
         #        )
         #        discovered_points.append(discovered_point)
+        #        logger.info(f"    异常点 {idx} 处理完成")
         # 
         # 4. 返回发现的异常点列表
+        #    logger.info(f"[步骤4] 发现完成: 最终发现 {len(discovered_points)} 个异常点")
         #    return discovered_points
+        
         # 临时返回空列表，等待实现
+        logger.info(f"  当前实现: 返回空列表（待实现）")
+        logger.info(f"[步骤4] 发现完成: 最终发现 0 个异常点")
         return []
     
     def _generate_recommendations(

@@ -51,35 +51,53 @@ class EntityAnalyzer:
         Returns:
             候选异常点列表
         """
-        logger.info(f"开始分析相关实体，异常类型: {anomaly_type.type_name}")
+        logger.info(f"[步骤2] 开始分析相关实体")
+        logger.info(f"  告警事件ID: {alarm_event.event_id}")
+        logger.info(f"  异常类型: [{anomaly_type.entity_type}] {anomaly_type.type_name}")
+        logger.info(f"  异常类型ID: {anomaly_type.type_id}")
         
         # TODO: 实现相关实体分析逻辑
+        logger.info(f"  开始提取告警事件中的实体信息...")
         # 1. 从告警事件中提取实体信息
         #    entities_from_alarm = self._extract_entities_from_alarm(alarm_event)
+        #    logger.info(f"  从告警事件中提取到 {len(entities_from_alarm)} 个实体")
         # 
         # 2. 从 CMDB 获取相关实体
+        #    logger.info(f"  从 CMDB 获取相关实体...")
         #    related_entities = self.cmdb_ds.get_related_entities(
         #        entities_from_alarm, 
         #        anomaly_type
         #    )
+        #    logger.info(f"  从 CMDB 获取到 {len(related_entities)} 个相关实体")
         # 
         # 3. 从异常库获取相关异常模式
+        #    logger.info(f"  从异常库获取相关异常模式...")
         #    anomaly_patterns = self.anomaly_library_ds.get_patterns(anomaly_type)
+        #    logger.info(f"  从异常库获取到 {len(anomaly_patterns)} 个异常模式")
         # 
         # 4. 根据异常模式和实体关系生成候选异常点
+        #    logger.info(f"  生成候选异常点...")
         #    candidate_points = self._generate_candidate_points(
         #        related_entities,
         #        anomaly_patterns,
         #        alarm_event
         #    )
+        #    logger.info(f"  生成 {len(candidate_points)} 个候选异常点")
         # 
         # 5. 过滤和排序候选异常点
+        #    logger.info(f"  过滤和排序候选异常点...")
         #    filtered_points = self._filter_and_sort(candidate_points)
+        #    logger.info(f"  过滤后剩余 {len(filtered_points)} 个候选异常点")
         # 
         # 6. 返回候选异常点列表（限制数量）
         #    max_candidates = 100  # 默认值
-        #    return filtered_points[:max_candidates]
+        #    final_points = filtered_points[:max_candidates]
+        #    logger.info(f"  最终返回 {len(final_points)} 个候选异常点")
+        #    return final_points
+        
         # 临时返回空列表，等待实现
+        logger.info(f"  当前实现: 返回空列表（待实现）")
+        logger.info(f"[步骤2] 分析完成: 找到 0 个候选异常点")
         return []
     
     def _extract_entities_from_alarm(

@@ -1,3 +1,8 @@
-时间：2025-11-13 15:10:11
-标题：prometheus 最近1m内 pod 0响应码异常请求
-应用名: audit-baidu-risk-analyze
+Grafana告警 
+时间：2025-11-13 16:22:00
+标题：[FIRING:1] 30s内非200请求数 
+应用名: image-translate-prod		应用ID: 11772		
+应用组ID: 1067		
+团队ID: 1010		
+详情：
+destination_app: image-translate-prod-v1	namespace: ai-translate	平均: 4.00	高于: 1.00	

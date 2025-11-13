@@ -12,9 +12,9 @@ rich>=13.0.0
 # 数据源连接
 # 根据实际数据源添加相应的客户端库
 
-# LLM 支持（可选）
-# openai>=1.0.0
-# langchain>=0.1.0
+# LLM 支持（可选，用于异常类型识别）
+# openai>=1.0.0  # 如果使用 OpenAI SDK
+# requests>=2.31.0  # 如果使用 HTTP 方式调用 LLM API
 
 # 统计和数据分析（可选）
 # numpy>=1.24.0

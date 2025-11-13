@@ -51,46 +51,62 @@ class AnomalyAnalyzer:
         Returns:
             带置信区间的异常点列表
         """
-        logger.info(f"开始分析异常，候选异常点数量: {len(candidate_points)}")
+        logger.info(f"[步骤3] 开始分析异常")
+        logger.info(f"  候选异常点数量: {len(candidate_points)}")
+        logger.info(f"  告警事件ID: {alarm_event.event_id}")
         
         anomaly_points = []
         
-        for candidate in candidate_points:
+        for idx, candidate in enumerate(candidate_points, 1):
+            logger.info(f"  分析候选异常点 {idx}/{len(candidate_points)}: {candidate.entity_type}/{candidate.entity_name} (ID: {candidate.entity_id})")
+            
             # TODO: 实现异常分析逻辑
             # 1. 收集 Events 数据
+            #    logger.info(f"    收集 Events 数据...")
             #    events_data = self._query_events_data(
             #        entity_id=candidate.entity_id,
             #        time_window='1h'  # 默认时间窗口
             #    )
+            #    logger.info(f"    收集到 {len(events_data)} 条 Events 数据")
             # 
             # 2. 收集 Trace 数据
+            #    logger.info(f"    收集 Trace 数据...")
             #    trace_data = self._query_trace_data(
             #        entity_id=candidate.entity_id,
             #        time_window='1h'
             #    )
+            #    logger.info(f"    收集到 {len(trace_data)} 条 Trace 数据")
             # 
             # 3. 收集 Metrics 数据
+            #    logger.info(f"    收集 Metrics 数据...")
             #    metrics_data = self._query_metrics_data(
             #        entity_id=candidate.entity_id,
             #        time_window='1h'
             #    )
+            #    logger.info(f"    收集到 {len(metrics_data)} 条 Metrics 数据")
             # 
             # 4. 收集 Log 数据
+            #    logger.info(f"    收集 Log 数据...")
             #    log_data = self._query_log_data(
             #        entity_id=candidate.entity_id,
             #        time_window='1h'
             #    )
+            #    logger.info(f"    收集到 {len(log_data)} 条 Log 数据")
             # 
             # 5. 综合分析数据，检测异常指标
+            #    logger.info(f"    检测异常指标...")
             #    anomaly_indicators = self._detect_anomaly_indicators(
             #        events_data, trace_data, metrics_data, log_data
             #    )
+            #    logger.info(f"    检测到 {len(anomaly_indicators)} 个异常指标")
             # 
             # 6. 计算置信度和置信区间
+            #    logger.info(f"    计算置信度和置信区间...")
             #    confidence, confidence_interval = self._calculate_confidence_interval(
             #        anomaly_indicators,
             #        confidence_level=0.95  # 默认置信水平
             #    )
+            #    logger.info(f"    置信度: {confidence:.2%}, 置信区间: {confidence_interval}")
             # 
             # 7. 生成带置信区间的异常点
             #    anomaly_point = AnomalyPointWithConfidence(
@@ -103,9 +119,10 @@ class AnomalyAnalyzer:
             #        metadata={...}
             #    )
             #    anomaly_points.append(anomaly_point)
+            #    logger.info(f"    候选异常点 {idx} 分析完成")
             pass
         
-        logger.info(f"分析完成，得到 {len(anomaly_points)} 个异常点（带置信区间）")
+        logger.info(f"[步骤3] 分析完成: 得到 {len(anomaly_points)} 个异常点（带置信区间）")
         # 临时返回空列表，等待实现
         return []
     

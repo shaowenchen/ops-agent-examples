@@ -60,31 +60,77 @@ class AnomalyAnalyzer:
         Returns:
             发现的异常点列表
         """
-        logger.info(f"开始分析告警事件: {alarm_event.event_id}")
+        logger.info("=" * 80)
+        logger.info(f"开始异常分析流程 - 告警事件ID: {alarm_event.event_id}")
+        logger.info(f"告警时间: {alarm_event.timestamp}")
+        logger.info(f"告警来源: {alarm_event.source}")
+        logger.info(f"告警级别: {alarm_event.severity}")
+        logger.info(f"告警消息: {alarm_event.message}")
+        logger.info("=" * 80)
         
         # 步骤1: 异常类型识别
-        # 输入: 告警事件、历史异常、规则
-        # 输出: 当前告警类型
+        logger.info("\n" + "-" * 80)
+        logger.info("步骤1: 异常类型识别")
+        logger.info("-" * 80)
+        logger.info(f"输入: 告警事件 (ID: {alarm_event.event_id})")
         current_alarm_type = self._detect_anomaly_type(alarm_event)
-        logger.info(f"识别到异常类型: {current_alarm_type.type_name} (置信度: {current_alarm_type.confidence})")
+        logger.info(f"输出: 异常类型识别完成")
+        logger.info(f"  - 实体类型: {current_alarm_type.entity_type}")
+        logger.info(f"  - 异常类型ID: {current_alarm_type.type_id}")
+        logger.info(f"  - 异常类型名称: {current_alarm_type.type_name}")
+        logger.info(f"  - 置信度: {current_alarm_type.confidence:.2%}")
+        logger.info(f"  - 描述: {current_alarm_type.description}")
+        logger.info(f"步骤1完成: 识别到异常类型 [{current_alarm_type.entity_type}] {current_alarm_type.type_name}")
         
         # 步骤2: 分析相关实体
-        # 输入: 异常类型、CMDB、异常库
-        # 输出: 候选异常点
+        logger.info("\n" + "-" * 80)
+        logger.info("步骤2: 分析相关实体")
+        logger.info("-" * 80)
+        logger.info(f"输入: 告警事件 (ID: {alarm_event.event_id}), 异常类型 ({current_alarm_type.type_name})")
         candidate_points = self._analyze_related_entities(alarm_event, current_alarm_type)
-        logger.info(f"找到 {len(candidate_points)} 个候选异常点")
+        logger.info(f"输出: 相关实体分析完成")
+        logger.info(f"  - 候选异常点数量: {len(candidate_points)}")
+        for i, point in enumerate(candidate_points, 1):
+            logger.info(f"  - 候选点 {i}: {point.entity_type}/{point.entity_name} (ID: {point.entity_id})")
+        logger.info(f"步骤2完成: 找到 {len(candidate_points)} 个候选异常点")
         
         # 步骤3: 分析异常
-        # 输入: 候选异常点、Events、Trace、Metrics、Log
-        # 输出: 带置信区间的异常点
+        logger.info("\n" + "-" * 80)
+        logger.info("步骤3: 分析异常")
+        logger.info("-" * 80)
+        logger.info(f"输入: {len(candidate_points)} 个候选异常点, 告警事件 (ID: {alarm_event.event_id})")
         anomaly_points_with_confidence = self._analyze_anomalies(candidate_points, alarm_event)
-        logger.info(f"分析得到 {len(anomaly_points_with_confidence)} 个异常点（带置信区间）")
+        logger.info(f"输出: 异常分析完成")
+        logger.info(f"  - 异常点数量（带置信区间）: {len(anomaly_points_with_confidence)}")
+        for i, point in enumerate(anomaly_points_with_confidence, 1):
+            logger.info(f"  - 异常点 {i}: {point.entity_type}/{point.entity_name}")
+            logger.info(f"    置信度: {point.confidence:.2%}, 置信区间: {point.confidence_interval}")
+            logger.info(f"    异常指标数量: {len(point.anomaly_indicators)}")
+        logger.info(f"步骤3完成: 分析得到 {len(anomaly_points_with_confidence)} 个异常点（带置信区间）")
         
         # 步骤4: 发现异常点
-        # 输入: 带置信区间的异常点
-        # 输出: 发现的异常点
+        logger.info("\n" + "-" * 80)
+        logger.info("步骤4: 发现异常点")
+        logger.info("-" * 80)
+        logger.info(f"输入: {len(anomaly_points_with_confidence)} 个异常点（带置信区间）, 异常类型 ({current_alarm_type.type_name})")
         discovered_points = self._discover_anomaly_points(anomaly_points_with_confidence, current_alarm_type)
-        logger.info(f"最终发现 {len(discovered_points)} 个异常点")
+        logger.info(f"输出: 异常点发现完成")
+        logger.info(f"  - 发现的异常点数量: {len(discovered_points)}")
+        for i, point in enumerate(discovered_points, 1):
+            logger.info(f"  - 异常点 {i}: {point.entity_type}/{point.entity_name} (ID: {point.entity_id})")
+            logger.info(f"    置信度: {point.confidence:.2%}, 异常类型: {point.anomaly_type}")
+            logger.info(f"    时间戳: {point.timestamp}")
+            logger.info(f"    异常指标数量: {len(point.indicators)}")
+            logger.info(f"    推荐建议数量: {len(point.recommendations)}")
+        logger.info(f"步骤4完成: 最终发现 {len(discovered_points)} 个异常点")
+        
+        logger.info("\n" + "=" * 80)
+        logger.info(f"异常分析流程完成 - 告警事件ID: {alarm_event.event_id}")
+        logger.info(f"总结: 识别异常类型 [{current_alarm_type.entity_type}] {current_alarm_type.type_name}, "
+                   f"找到 {len(candidate_points)} 个候选点, "
+                   f"分析得到 {len(anomaly_points_with_confidence)} 个异常点, "
+                   f"最终发现 {len(discovered_points)} 个异常点")
+        logger.info("=" * 80 + "\n")
         
         return discovered_points
     

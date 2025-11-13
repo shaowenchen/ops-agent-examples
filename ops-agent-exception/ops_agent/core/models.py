@@ -21,8 +21,9 @@ class AlarmEvent:
 @dataclass
 class AnomalyType:
     """异常类型"""
-    type_id: str
-    type_name: str
+    entity_type: str  # 实体类型：node, pod, service 等
+    type_id: str  # 异常类型ID：node_cpu, pod_memory 等
+    type_name: str  # 异常类型名称（描述）
     confidence: float
     description: str
 

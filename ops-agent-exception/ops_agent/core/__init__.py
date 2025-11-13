@@ -11,6 +11,11 @@ from .models import (
     AnomalyPointWithConfidence,
     DiscoveredAnomalyPoint
 )
+from .anomaly_types import (
+    EntityType,
+    AnomalyTypeEnum,
+    get_all_anomaly_types
+)
 
 __all__ = [
     "AnomalyAnalyzer",
@@ -18,6 +23,9 @@ __all__ = [
     "AnomalyType",
     "CandidateAnomalyPoint",
     "AnomalyPointWithConfidence",
-    "DiscoveredAnomalyPoint"
+    "DiscoveredAnomalyPoint",
+    "EntityType",
+    "AnomalyTypeEnum",
+    "get_all_anomaly_types"
 ]
 
