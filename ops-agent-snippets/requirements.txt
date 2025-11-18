@@ -1,0 +1,4 @@
+urllib3>=1.26.0
+python-dotenv>=0.19.0
+autogen-ext==0.7.1
+mcp==1.18.0

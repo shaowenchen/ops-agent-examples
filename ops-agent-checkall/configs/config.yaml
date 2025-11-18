@@ -1,0 +1,40 @@
+# Ops Agent CheckAll Configuration
+
+# MCP Server Configuration
+# 支持配置多个 MCP 服务器，使用列表格式并列配置
+# 第一个服务器默认为 default，或者可以显式指定 default: true
+mcp_servers:
+  - name: "MCP1"
+    # MCP server URL
+    server_url: "https://your-mcp-server-url.com/mcp"
+    
+    # Request timeout
+    timeout: "30s"
+    
+    # Authentication token
+    token: "your-mcp-token-here"
+    
+    # 是否作为默认服务器（可选，第一个服务器默认为 default）
+    default: true
+  
+  # 可以添加更多服务器配置
+  # - name: "MCP2"
+  #   server_url: "https://another-mcp-server.com/mcp"
+  #   timeout: "30s"
+  #   token: "another-token"
+  #   default: false
+
+# OpenAI Configuration
+openai:
+  # OpenAI API key
+  api_key: "your-openai-api-key"
+  
+  # OpenAI API host (for custom endpoints)
+  api_host: "https://api.openai.com/v1"
+  
+  # Model name
+  model: "gpt-4"
+  
+  # Maximum tokens for completion
+  max_tokens: 4000
+
