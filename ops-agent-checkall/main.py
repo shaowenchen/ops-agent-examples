@@ -214,10 +214,6 @@ def run(config, queries, verbose, summary, notify):
                     elif result_data:  # Not empty
                         has_data = True
                 
-                if not has_data:
-                    console.print(f"[yellow]No data found for {tool_name}, continuing to next query...[/yellow]\n")
-                    continue
-                
                 # Debug: log the structure for troubleshooting
                 if verbose:
                     logger.debug(f"Processing result for {tool_name}: {json.dumps(result_data, ensure_ascii=False)[:500]}")
@@ -226,18 +222,18 @@ def run(config, queries, verbose, summary, notify):
                 formater_name = result.get('formater')
                 formatted_result = format_query_result(result_data, formatter_name=formater_name, tool_name=tool_name)
                 
-                # Always include title if desc exists
+                # 如果格式化后的结果为空，跳过整个查询项（包括 desc）
+                if not formatted_result or not formatted_result.strip():
+                    console.print(f"[yellow]No data found for {tool_name}, skipping...[/yellow]\n")
+                    continue
+                
+                # 有数据才输出 desc 和结果
                 if desc:
                     output_lines.append(f"### {desc}")
                     output_lines.append("")
                 
-                # Include formatted result if available
-                if formatted_result and formatted_result.strip():
-                    output_lines.append(formatted_result)
-                    output_lines.append("")
-                else:
-                    # Content is empty, but title is already added above
-                    output_lines.append("")
+                output_lines.append(formatted_result)
+                output_lines.append("")
         
         # Combine all formatted results into output
         output = "\n".join(output_lines).strip()
