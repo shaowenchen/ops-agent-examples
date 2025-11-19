@@ -32,13 +32,13 @@ queries:
   - tool_name: "query-metrics-from-prometheus"
     mcp_server: "default"
     args:
-      query: "sort_desc(max by (node)((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100)) > 70"
+      query: "sort_desc(max by (node)((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100)) > 80"
     desc: "节点内存使用率高的节点"
     formater: "metrics-formatter"
   - tool_name: "query-metrics-from-prometheus"
     mcp_server: "default"
     args:
-      query: "sort_desc((100 - avg by (node) (rate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)) > 70"
+      query: "sort_desc((100 - avg by (node) (rate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)) > 80"
     desc: "节点CPU使用率高的节点"
     formater: "metrics-formatter"
   - tool_name: "query-metrics-from-prometheus"
