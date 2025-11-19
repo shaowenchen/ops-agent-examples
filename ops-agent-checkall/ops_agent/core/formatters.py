@@ -128,17 +128,45 @@ class MetricsFormatter(BaseFormatter):
                     value = item.get('value')
                     
                     if isinstance(metric, dict) and value:
-                        # Extract node name from metric labels (try common node field names)
-                        node_name = None
-                        for node_key in ['node', 'instance', 'host', 'hostname']:
-                            if node_key in metric:
-                                node_name = metric[node_key]
-                                break
+                        # Extract all labels, excluding internal Prometheus labels
+                        # Priority order: request_uri, code, then other labels (excluding __name__, job, etc.)
+                        internal_labels = {'__name__', 'job', 'instance', 'prometheus', 'replica'}
+                        node_labels = {'node', 'instance', 'host', 'hostname'}
                         
-                        # If no node found, try to get any label value as identifier
-                        if not node_name and metric:
-                            # Use the first label value as identifier
-                            node_name = list(metric.values())[0] if metric else None
+                        # Priority labels to show first
+                        priority_labels = ['request_uri', 'code', 'destination_app', 'destination_workload_namespace']
+                        
+                        # Collect all label values in priority order
+                        label_values = []
+                        label_keys_used = set()
+                        
+                        # First, add priority labels
+                        for label_key in priority_labels:
+                            if label_key in metric and label_key not in internal_labels:
+                                label_values.append(metric[label_key])
+                                label_keys_used.add(label_key)
+                        
+                        # Then, add other non-internal, non-node labels
+                        for label_key, label_value in metric.items():
+                            if (label_key not in internal_labels and 
+                                label_key not in node_labels and 
+                                label_key not in label_keys_used):
+                                label_values.append(label_value)
+                                label_keys_used.add(label_key)
+                        
+                        # Finally, add node labels if no other labels found
+                        if not label_values:
+                            for node_key in node_labels:
+                                if node_key in metric:
+                                    label_values.append(metric[node_key])
+                                    break
+                        
+                        # If still no labels, use first available label
+                        if not label_values and metric:
+                            for key, val in metric.items():
+                                if key not in internal_labels:
+                                    label_values.append(val)
+                                    break
                         
                         # Extract actual value, skip timestamp if it's in array format [timestamp, value]
                         if isinstance(value, list) and len(value) >= 2:
@@ -160,9 +188,10 @@ class MetricsFormatter(BaseFormatter):
                             else:
                                 continue
                         
-                        # Format as "- node-name, value" on separate line
-                        if node_name:
-                            formatted_lines.append(f"- {node_name}, {actual_value}")
+                        # Format as "- label1, label2: value" on separate line
+                        if label_values:
+                            labels_str = ", ".join(str(v) for v in label_values)
+                            formatted_lines.append(f"- {labels_str}: {actual_value}")
                         else:
                             formatted_lines.append(f"- {actual_value}")
                     else:
@@ -194,16 +223,44 @@ class MetricsFormatter(BaseFormatter):
                 value = content.get('value')
                 
                 if isinstance(metric, dict):
-                    # Extract node name from metric labels
-                    node_name = None
-                    for node_key in ['node', 'instance', 'host', 'hostname']:
-                        if node_key in metric:
-                            node_name = metric[node_key]
-                            break
+                    # Extract all labels, excluding internal Prometheus labels
+                    internal_labels = {'__name__', 'job', 'instance', 'prometheus', 'replica'}
+                    node_labels = {'node', 'instance', 'host', 'hostname'}
                     
-                    # If no node found, try to get any label value as identifier
-                    if not node_name and metric:
-                        node_name = list(metric.values())[0] if metric else None
+                    # Priority labels to show first
+                    priority_labels = ['request_uri', 'code', 'destination_app', 'destination_workload_namespace']
+                    
+                    # Collect all label values in priority order
+                    label_values = []
+                    label_keys_used = set()
+                    
+                    # First, add priority labels
+                    for label_key in priority_labels:
+                        if label_key in metric and label_key not in internal_labels:
+                            label_values.append(metric[label_key])
+                            label_keys_used.add(label_key)
+                    
+                    # Then, add other non-internal, non-node labels
+                    for label_key, label_value in metric.items():
+                        if (label_key not in internal_labels and 
+                            label_key not in node_labels and 
+                            label_key not in label_keys_used):
+                            label_values.append(label_value)
+                            label_keys_used.add(label_key)
+                    
+                    # Finally, add node labels if no other labels found
+                    if not label_values:
+                        for node_key in node_labels:
+                            if node_key in metric:
+                                label_values.append(metric[node_key])
+                                break
+                    
+                    # If still no labels, use first available label
+                    if not label_values and metric:
+                        for key, val in metric.items():
+                            if key not in internal_labels:
+                                label_values.append(val)
+                                break
                     
                     # Extract actual value, skip timestamp if it's in array format [timestamp, value]
                     if isinstance(value, list) and len(value) >= 2:
@@ -215,9 +272,10 @@ class MetricsFormatter(BaseFormatter):
                     if isinstance(actual_value, (int, float)):
                         actual_value = int(actual_value)
                     
-                    # Format as "node-name, value" or just "value"
-                    if node_name:
-                        formatted_lines.append(f"- {node_name}, {actual_value}")
+                    # Format as "- label1, label2: value"
+                    if label_values:
+                        labels_str = ", ".join(str(v) for v in label_values)
+                        formatted_lines.append(f"- {labels_str}: {actual_value}")
                     else:
                         formatted_lines.append(f"- {actual_value}")
             else:

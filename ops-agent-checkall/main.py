@@ -84,8 +84,8 @@ def run(config, queries, verbose, summary, notify):
         else:
             # Try default locations
             default_locations = [
-                os.path.join(os.path.dirname(__file__), "queries.yaml"),
-                "./queries.yaml",
+                os.path.join(os.path.dirname(__file__), "default.yaml"),
+                "./default.yaml",
             ]
             queries_file = None
             for loc in default_locations:

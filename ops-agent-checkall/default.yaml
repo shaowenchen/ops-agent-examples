@@ -1,0 +1,64 @@
+summary_prompt: |
+  请对以下所有查询结果进行总结和分析。总结应该包括：
+  1. 集群维度
+  2. 节点维度
+  3. 应用维度
+  请用中文回答，简洁明了给出目前系统可能存在的问题。
+queries:
+  - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "sre"
+    args:
+      query: 'round(sum by(request_uri,code)(increase(aia_apisix_http_status{code=~"5.*"}[5m])), 0.001) > 0'
+    desc: "qingqiu 5xx 高的服务(5m)"
+    formater: "metrics-formatter"
+  - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "kce"
+    args:
+      query: "sort_desc(sum by (destination_app) (rate(istio_requests_total{response_code=~'5.*', destination_app!~'unknown', destination_workload_namespace!~'unknown'}[5m]))) > 1"
+    desc: "应用 5xx 高的服务(5m)"
+    formater: "metrics-formatter"
+  - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "kce"
+    args:
+      query: "sort_desc(sum by(destination_app) (rate(istio_requests_total{response_code='0', destination_app!~'unknown', destination_workload_namespace!~'unknown'}[5m]))) > 1"
+    desc: "应用 0 状态码的服务(5m)"
+    formater: "metrics-formatter"
+  - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "default"
+    args:
+      query: "sort_desc(max by (node)((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100)) > 70"
+    desc: "节点内存使用率高的节点"
+    formater: "metrics-formatter"
+  - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "default"
+    args:
+      query: "sort_desc((100 - avg by (node) (rate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)) > 70"
+    desc: "节点CPU使用率高的节点"
+    formater: "metrics-formatter"
+  - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "default"
+    args:
+      query: "sum by (node) (irate(node_network_receive_drop_total{}[5m])) > 1000"
+    desc: "节点网络丢包高的节点(5m)"
+    formater: "metrics-formatter"
+  - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "default"
+    args:
+      query: "sort_desc(100 - (max by (node) (node_filesystem_avail_bytes{device!~'rootfs', fstype!~'tmpfs'}) * 100 / max by (node) (node_filesystem_size_bytes{device!~'rootfs', fstype!~'tmpfs'})) > 85)"
+    desc: "节点磁盘使用率高的节点"
+    formater: "metrics-formatter"
+  - tool_name: "search-logs-from-elasticsearch"
+    mcp_server: "default"
+    args:
+      index: "atms-filebeat-7.14.1-*"
+      body: '{"size":0,"query":{"bool":{"must":[{"range":{"@timestamp":{"gt":"now-10m"}}},{"term":{"level":"ERROR"}}]}},"aggs":{"error_by_node":{"terms":{"field":"k8s.node","size":20,"order":{"_count":"desc"}}}}}'
+    desc: "应用错误日志分布统计(10m)"
+    formater: "atms-logs-formatter"
+  - tool_name: "search-logs-from-elasticsearch"
+    mcp_server: "default"
+    args:
+      index: "ingress-filebeat-7.14.1-*"
+      body: '{"size":20,"query":{"bool":{"must":[{"range":{"@timestamp":{"gt":"now-10m"}}},{"range":{"response_code":{"gte":500,"lte":599}}}]}},"_source":["@timestamp","response_code","k8s.node","k8s.pod","request_uri","upstream_status","upstream_addr"],"sort":[{"@timestamp":{"order":"desc"}}]}'
+    desc: "网关5xx错误分布统计(10m)"
+    formater: "ingress-logs-formatter"
+

@@ -64,8 +64,8 @@ def trigger_task():
         else:
             # 尝试默认位置
             default_locations = [
-                os.path.join(os.path.dirname(__file__), "queries.yaml"),
-                "./queries.yaml",
+                os.path.join(os.path.dirname(__file__), "default.yaml"),
+                "./default.yaml",
             ]
             queries_file = None
             for loc in default_locations:
