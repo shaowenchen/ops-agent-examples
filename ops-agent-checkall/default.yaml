@@ -9,62 +9,62 @@ queries:
     mcp_server: "sre"
     args:
       query: 'round(sum by(request_uri,code)(increase(aia_apisix_http_status{code=~"5.*"}[5m])), 0.001) > 0'
-    desc: "qingqiu 5xx 高的服务(5m)"
+    desc: "qingqiu 5xx 高的服务(qps)"
     formater: "metrics-formatter"
   - tool_name: "query-metrics-from-prometheus"
     mcp_server: "kce"
     args:
       query: "sort_desc(sum by (destination_app) (rate(istio_requests_total{response_code=~'5.*', destination_app!~'unknown', destination_workload_namespace!~'unknown'}[5m]))) > 1"
-    desc: "应用 5xx 高的服务(5m)"
+    desc: "应用 5xx 高的服务(qps)"
     formater: "metrics-formatter"
   - tool_name: "query-metrics-from-prometheus"
     mcp_server: "kce"
     args:
       query: "sort_desc(sum by(destination_app) (rate(istio_requests_total{response_code='0', destination_app!~'unknown', destination_workload_namespace!~'unknown'}[5m]))) > 1"
-    desc: "应用 0 状态码的服务(5m)"
+    desc: "应用 0 状态码的服务(qps)"
     formater: "metrics-formatter"
   - tool_name: "query-metrics-from-prometheus"
     mcp_server: "kce"
     args:
       query: "sort_desc(histogram_quantile(0.99, sum by (destination_app, le) (rate(istio_request_duration_milliseconds_bucket{destination_app!~\"unknown\", destination_workload_namespace!~\"unknown\", le=~\"100|200|500|1000\"}[5m]))) / max_over_time(histogram_quantile(0.99, sum by (destination_app, le) (rate(istio_request_duration_milliseconds_bucket{destination_app!~\"unknown\", destination_workload_namespace!~\"unknown\", le=~\"100|200|500|1000\"}[5m])))[1d:15m]) > 1.1"
-    desc: "响应延时环比 1d 前增长"
+    desc: "应用响应延时比 1d 前增长(倍数)"
     formater: "metrics-formatter"
   - tool_name: "query-metrics-from-prometheus"
     mcp_server: "default"
     args:
       query: "sort_desc(max by (node)((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100)) > 80"
-    desc: "节点内存使用率高的节点"
+    desc: "节点内存使用率高的节点(%)"
     formater: "metrics-formatter"
   - tool_name: "query-metrics-from-prometheus"
     mcp_server: "default"
     args:
       query: "sort_desc((100 - avg by (node) (rate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)) > 80"
-    desc: "节点CPU使用率高的节点"
+    desc: "节点CPU使用率高的节点(%)"
     formater: "metrics-formatter"
   - tool_name: "query-metrics-from-prometheus"
     mcp_server: "default"
     args:
       query: "sum by (node) (irate(node_network_receive_drop_total{}[5m])) > 1000"
-    desc: "节点网络丢包高的节点(5m)"
+    desc: "节点网络丢包高(pps)"
     formater: "metrics-formatter"
   - tool_name: "query-metrics-from-prometheus"
     mcp_server: "default"
     args:
       query: "sort_desc(100 - (max by (node) (node_filesystem_avail_bytes{device!~'rootfs', fstype!~'tmpfs'}) * 100 / max by (node) (node_filesystem_size_bytes{device!~'rootfs', fstype!~'tmpfs'})) > 85)"
-    desc: "节点磁盘使用率高的节点"
+    desc: "节点磁盘使用率高(%)"
     formater: "metrics-formatter"
   - tool_name: "search-logs-from-elasticsearch"
     mcp_server: "default"
     args:
       index: "atms-filebeat-7.14.1-*"
       body: '{"size":0,"query":{"bool":{"must":[{"range":{"@timestamp":{"gt":"now-5m"}}},{"term":{"level":"ERROR"}}]}},"aggs":{"error_by_node":{"terms":{"field":"k8s.node","size":20,"order":{"_count":"desc"}}}}}'
-    desc: "应用错误日志分布统计(5m)"
+    desc: "应用错误日志分布统计(条)"
     formater: "atms-logs-formatter"
   - tool_name: "search-logs-from-elasticsearch"
     mcp_server: "default"
     args:
       index: "ingress-filebeat-7.14.1-*"
       body: '{"size":20,"query":{"bool":{"must":[{"range":{"@timestamp":{"gt":"now-5m"}}},{"range":{"response_code":{"gte":500,"lte":599}}}]}},"_source":["@timestamp","response_code","k8s.node","k8s.pod","request_uri","upstream_status","upstream_addr"],"sort":[{"@timestamp":{"order":"desc"}}]}'
-    desc: "网关5xx错误分布统计(5m)"
+    desc: "网关5xx错误分布统计(条)"
     formater: "ingress-logs-formatter"
 
