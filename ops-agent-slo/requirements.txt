@@ -1,0 +1,25 @@
+# Core dependencies
+fastmcp==2.12.4
+nest-asyncio==1.6.0
+
+# HTTP client
+httpx==0.28.1
+requests==2.32.3
+
+# Configuration management
+pyyaml==6.0.2
+python-dotenv>=1.0.1
+
+# Logging
+colorlog==6.9.0
+
+# CLI support
+click==8.1.8
+rich==13.9.4
+
+# Prometheus client
+prometheus-client==0.20.0
+
+# Web framework
+flask==3.0.3
+

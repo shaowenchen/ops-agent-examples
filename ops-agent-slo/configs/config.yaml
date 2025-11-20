@@ -1,0 +1,26 @@
+# Ops Agent SLO Configuration
+
+# MCP Server Configuration
+# 支持配置多个 MCP 服务器，使用列表格式并列配置
+# 第一个服务器默认为 default，或者可以显式指定 default: true
+mcp_servers:
+  - name: "MCP1"
+    # MCP server URL
+    server_url: "https://your-mcp-server-url.com/mcp"
+    
+    # Request timeout
+    timeout: "30s"
+    
+    # Authentication token
+    token: "your-mcp-token-here"
+    
+    # 是否作为默认服务器（可选，第一个服务器默认为 default）
+    default: true
+
+# LLM Configuration (optional)
+# llm:
+#   provider: "openai"  # openai, anthropic, etc.
+#   api_key: "your-api-key"
+#   model: "gpt-4"
+#   base_url: "https://api.openai.com/v1"
+
