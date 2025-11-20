@@ -2,10 +2,8 @@
 Logging utilities for Ops Agent CheckAll
 """
 
-import os
 import sys
 import logging
-from logging.handlers import RotatingFileHandler
 import colorlog
 from typing import Optional
 
@@ -50,27 +48,6 @@ def setup_logging(log_level: str = "INFO"):
     
     # Add console handler to root logger
     root_logger.addHandler(console_handler)
-    
-    # Create logs directory if it doesn't exist
-    logs_dir = "logs"
-    if not os.path.exists(logs_dir):
-        os.makedirs(logs_dir)
-    
-    # Create file handler for writing to log file
-    file_handler = RotatingFileHandler(
-        os.path.join(logs_dir, "ops-agent-checkall.log"),
-        maxBytes=10 * 1024 * 1024,  # 10 MB
-        backupCount=5
-    )
-    
-    # Create file formatter (without colors)
-    file_formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
-    
-    # Set formatter for file handler
-    file_handler.setFormatter(file_formatter)
-    
-    # Add file handler to root logger
-    root_logger.addHandler(file_handler)
 
 
 def get_logger(name: str, log_level: Optional[str] = None) -> logging.Logger:

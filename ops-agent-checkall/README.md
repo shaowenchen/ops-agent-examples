@@ -5,13 +5,14 @@
 ## 功能特性
 
 - 🔍 **批量 MCP 查询**: 支持执行多个 MCP 查询
-- ⏰ **自动时间范围**: 自动为查询添加默认时间范围（默认最近3小时，可在配置中修改）
+- ⏰ **自动时间范围**: 自动为查询添加默认时间范围（默认最近10分钟，可在配置中修改）
 - 🤖 **LLM 智能总结**: 使用 LLM 对查询结果进行智能分析和总结
 - 📊 **结果可视化**: 使用 Rich 库提供美观的控制台输出
 - ⚙️ **灵活配置**: 支持配置文件和环境变量
 - 📝 **结果保存**: 自动保存查询结果和总结到 JSON 文件
 - 🛠️ **多模块支持**: 支持 SOPS、Events、Metrics、Logs、Traces 等多个运维模块
-- 📢 **通知功能**: 支持在分析完成后发送通知到群聊（通过环境变量配置）
+- 🌐 **HTTP API**: 提供 HTTP 服务接口，支持通过 API 触发任务
+- 🔌 **多 MCP 服务器**: 支持配置多个 MCP 服务器，每个查询可指定使用哪个服务器
 
 ## 安装
 
@@ -32,11 +33,47 @@ pip install -r requirements.txt
 编辑 `configs/config.yaml` 文件，配置 MCP 服务器和 OpenAI API：
 
 ```yaml
-mcp:
-  server_url: "https://your-mcp-server-url.com/mcp"
-  timeout: "30s"
-  token: "your-mcp-token-here"
+# Ops Agent CheckAll Configuration
 
+# MCP Server Configuration
+# 支持配置多个 MCP 服务器，使用列表格式并列配置
+# 第一个服务器默认为 default，或者可以显式指定 default: true
+mcp_servers:
+  - name: "MCP1"
+    # MCP server URL
+    server_url: "https://your-mcp-server-url.com/mcp"
+    
+    # Request timeout
+    timeout: "30s"
+    
+    # Authentication token
+    token: "your-mcp-token-here"
+    
+    # 是否作为默认服务器（可选，第一个服务器默认为 default）
+    default: true
+  
+  # 可以添加更多服务器配置
+  # - name: "MCP2"
+  #   server_url: "https://another-mcp-server.com/mcp"
+  #   timeout: "30s"
+  #   token: "another-token"
+  #   default: false
+
+# OpenAI Configuration
+openai:
+  # OpenAI API key
+  api_key: "your-openai-api-key"
+  
+  # OpenAI API host (for custom endpoints)
+  api_host: "https://api.openai.com/v1"
+  
+  # Model name
+  model: "gpt-4"
+  
+  # Maximum tokens for completion
+  max_tokens: 4000
+
+# Query Configuration
 query:
   # Default time range for queries (e.g., "10m" for 10 minutes)
   # This will be automatically added to queries that don't specify time parameters
@@ -45,56 +82,254 @@ query:
   # Time parameter names to use (comma-separated)
   # Common options: "start_time,end_time", "since", "duration"
   time_param_names: "start_time,end_time"
-
-openai:
-  api_key: "your-openai-api-key"
-  api_host: "https://api.openai.com/v1"
-  model: "gpt-4"
-  max_tokens: 4000
 ```
 
-### 2. 环境变量（可选）
+### 2. 多 MCP 服务器配置
 
-也可以通过环境变量配置：
+#### 配置文件方式
+
+在 `configs/config.yaml` 中配置多个服务器，使用列表格式并列配置：
+
+```yaml
+mcp_servers:
+  - name: "MCP1"
+    server_url: "https://mcp-server-1.com/mcp"
+    timeout: "30s"
+    token: "token-for-server-1"
+    default: true  # 可选，标记为默认服务器（第一个服务器默认为 default）
+  
+  - name: "MCP2"
+    server_url: "https://mcp-server-2.com/mcp"
+    timeout: "30s"
+    token: "token-for-server-2"
+  
+  - name: "prometheus"
+    server_url: "https://prometheus-mcp-server.com/mcp"
+    timeout: "60s"
+    token: "prometheus-token"
+```
+
+#### 环境变量方式
+
+通过 `MCP_SERVERS_JSON` 环境变量配置多个服务器（只支持列表格式）：
 
 ```bash
-export MCP_SERVERURL="https://your-mcp-server-url.com/mcp"
-export MCP_TOKEN="your-mcp-token"
-export MCP_TIMEOUT="30s"
+export MCP_SERVERS_JSON='[
+  {
+    "name": "MCP1",
+    "server_url": "https://mcp-server-1.com/mcp",
+    "timeout": "30s",
+    "token": "token-1",
+    "default": true
+  },
+  {
+    "name": "MCP2",
+    "server_url": "https://mcp-server-2.com/mcp",
+    "timeout": "30s",
+    "token": "token-2"
+  }
+]'
+```
+
+**单行格式（适合 Docker/K8s）：**
+
+```bash
+export MCP_SERVERS_JSON='[{"name":"MCP1","server_url":"https://mcp-server-1.com/mcp","timeout":"30s","token":"token1","default":true},{"name":"MCP2","server_url":"https://mcp-server-2.com/mcp","timeout":"30s","token":"token2"}]'
+```
+
+#### 在查询中使用
+
+在 `default.yaml` 中，每个查询可以指定 `mcp_server` 字段：
+
+```yaml
+queries:
+  - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "prometheus"  # 使用名为 "prometheus" 的服务器
+    args:
+      query: "up"
+    desc: "检查 Prometheus 服务状态"
+    formater: "metrics-formatter"
+  
+  - tool_name: "search-logs-from-elasticsearch"
+    mcp_server: "default"  # 使用默认服务器
+    args:
+      index: "logs-*"
+      body: '{"query": {...}}'
+    desc: "搜索日志"
+    formater: "atms-logs-formatter"
+  
+  - tool_name: "query-metrics-from-prometheus"
+    # 如果不指定 mcp_server，默认使用 "default" 服务器
+    args:
+      query: "node_cpu_seconds_total"
+    desc: "查询 CPU 指标"
+    formater: "metrics-formatter"
+```
+
+#### 默认服务器规则
+
+- 如果配置了 `default: true`，该服务器会被设为默认服务器
+- 如果没有显式标记，第一个服务器（列表中的第一个）会自动成为默认服务器
+- 默认服务器可以通过名称或 `"default"` 来引用
+
+#### 配置优先级
+
+1. **环境变量 `MCP_SERVERS_JSON`** - 最高优先级
+2. **配置文件 `mcp_servers`（列表格式）** - 次优先级
+
+#### 注意事项
+
+1. 如果查询中指定的 `mcp_server` 不存在，会自动回退到 `default` 服务器
+2. MCP 工具客户端会被缓存，同一个服务器只会创建一个客户端实例
+3. 每个查询可以独立指定使用哪个服务器，实现灵活的多服务器查询
+4. 配置只支持列表格式，使用 `name` 字段指定服务器名称
+5. 服务器名称建议使用有意义的名称如 `MCP1`、`MCP2`、`prometheus` 等
+
+### 3. 环境变量配置
+
+#### 基本环境变量
+
+```bash
+# MCP 服务器配置（多服务器，列表格式）
+export MCP_SERVERS_JSON='[{"name":"MCP1","server_url":"https://mcp-server-1.com/mcp","timeout":"30s","token":"token1","default":true}]'
+
+# 查询配置
 export QUERY_DEFAULT_TIME_RANGE="10m"
 export QUERY_TIME_PARAM_NAMES="start_time,end_time"
+
+# OpenAI 配置
 export OPENAI_API_KEY="your-openai-api-key"
 export OPENAI_API_HOST="https://api.openai.com/v1"
 export OPENAI_MODEL="gpt-4"
 export OPENAI_MAX_TOKENS="4000"
-
-# Notification configuration (optional)
-export NOTIFY_URL="https://your-notification-webhook-url.com"
-# 或
-export NOTIFICATION_URL="https://your-notification-webhook-url.com"
 ```
 
-### 3. 查询配置
+#### 环境变量使用场景
 
-编辑 `queries.yaml` 文件，定义要执行的 MCP 查询。每个查询可以包含：
+**Docker 中使用：**
+
+```dockerfile
+# Dockerfile
+ENV MCP_SERVERS_JSON='[{"name":"MCP1","server_url":"https://mcp1.example.com/mcp","timeout":"30s","token":"token1","default":true},{"name":"MCP2","server_url":"https://mcp2.example.com/mcp","timeout":"30s","token":"token2"}]'
+```
+
+**Docker Compose 中使用：**
+
+```yaml
+# docker-compose.yml
+services:
+  ops-agent:
+    environment:
+      - MCP_SERVERS_JSON=[{"name":"MCP1","server_url":"https://mcp1.example.com/mcp","timeout":"30s","token":"token1","default":true},{"name":"MCP2","server_url":"https://mcp2.example.com/mcp","timeout":"30s","token":"token2"}]
+```
+
+**Kubernetes 中使用：**
+
+```yaml
+# k8s-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ops-agent
+spec:
+  template:
+    spec:
+      containers:
+      - name: ops-agent
+        env:
+        - name: MCP_SERVERS_JSON
+          value: '[{"name":"MCP1","server_url":"https://mcp1.example.com/mcp","timeout":"30s","token":"token1","default":true},{"name":"MCP2","server_url":"https://mcp2.example.com/mcp","timeout":"30s","token":"token2"}]'
+```
+
+**使用 Secret（推荐用于生产环境）：**
+
+```yaml
+# k8s-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mcp-servers-config
+type: Opaque
+stringData:
+  MCP_SERVERS_JSON: |
+    [
+      {
+        "name": "MCP1",
+        "server_url": "https://mcp1.example.com/mcp",
+        "timeout": "30s",
+        "token": "token1",
+        "default": true
+      },
+      {
+        "name": "MCP2",
+        "server_url": "https://mcp2.example.com/mcp",
+        "timeout": "30s",
+        "token": "token2"
+      }
+    ]
+
+# 在 Deployment 中引用
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: ops-agent
+        env:
+        - name: MCP_SERVERS_JSON
+          valueFrom:
+            secretKeyRef:
+              name: mcp-servers-config
+              key: MCP_SERVERS_JSON
+```
+
+**配置字段说明：**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | 是 | 服务器名称，用于在查询中引用 |
+| `server_url` | string | 是 | MCP 服务器 URL |
+| `token` | string | 是 | 认证 token |
+| `timeout` | string | 否 | 超时时间，默认 "30s" |
+| `default` | boolean | 否 | 是否作为默认服务器，默认 false（第一个服务器自动成为 default） |
+
+**注意事项：**
+
+1. **JSON 格式要求**：环境变量必须是有效的 JSON 格式，只支持列表格式
+2. **引号转义**：在 shell 中使用时，注意单引号和双引号的转义
+3. **默认服务器**：如果设置了 `default: true`，该服务器会成为默认服务器；否则第一个服务器自动成为默认服务器
+4. **优先级**：环境变量 `MCP_SERVERS_JSON` 的优先级高于配置文件
+5. **合并策略**：环境变量中的配置会与配置文件中的配置合并，环境变量优先
+
+### 4. 查询配置
+
+编辑 `default.yaml` 文件，定义要执行的 MCP 查询。每个查询可以包含：
 
 - `tool_name`: MCP 工具名称（必需）
+- `mcp_server`: MCP 服务器名称（可选，默认使用 "default" 服务器）
 - `args`: 工具参数（可选）
 - `desc`: 查询描述（可选），用于大模型总结时理解查询目的，例如："最近10分钟 CPU使用率超过50%的节点"
+- `formater`: 格式化器名称（可选），用于指定结果格式化方式
 
 **注意**：`desc` 字段是给大模型看的描述，用于帮助 LLM 更好地理解每个查询的目的和上下文，从而生成更准确的总结。
 
 ```yaml
 queries:
   - tool_name: "get-events-from-ops"
+    mcp_server: "default"
     args:
       subject_pattern: "ops.clusters.>"
       limit: "5"
+    desc: "获取所有集群的事件信息"
+    formater: "events-formatter"
   
-  - tool_name: "another-tool-name"
+  - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "prometheus"
     args:
-      param1: "value1"
-      param2: "value2"
+      query: "up"
+    desc: "查询 Prometheus 服务状态"
+    formater: "metrics-formatter"
 ```
 
 可选：自定义总结提示词：
@@ -120,32 +355,7 @@ python main.py -c /path/to/config.yaml
 ### 指定查询文件
 
 ```bash
-python main.py -q /path/to/queries.yaml
-```
-
-### 使用示例查询文件
-
-项目提供了多个示例查询文件，可以根据不同场景使用：
-
-- `queries-example-minimal.yaml`: 最小示例，包含基本查询
-- `queries-example-comprehensive.yaml`: 全面示例，覆盖所有模块
-- `queries-example-logs-focused.yaml`: 日志聚焦示例，用于故障排查
-- `queries-example-metrics-focused.yaml`: 指标聚焦示例，用于系统监控
-
-使用示例：
-
-```bash
-# 使用最小示例
-python main.py -q queries-example-minimal.yaml
-
-# 使用全面示例
-python main.py -q queries-example-comprehensive.yaml
-
-# 使用日志聚焦示例
-python main.py -q queries-example-logs-focused.yaml
-
-# 使用指标聚焦示例
-python main.py -q queries-example-metrics-focused.yaml
+python main.py -q /path/to/default.yaml
 ```
 
 ### 详细日志
@@ -157,41 +367,169 @@ python main.py --verbose
 ### 生成 LLM 总结
 
 ```bash
-# 生成总结（不发送通知）
 python main.py --summary
 ```
 
-### 生成 LLM 总结并发送通知
+## HTTP API 服务
+
+### 启动服务
+
+**使用 Docker：**
 
 ```bash
-# 设置通知 URL 环境变量
-export NOTIFY_URL="https://your-webhook-url.com"
-
-# 生成总结并发送通知
-python main.py --summary --notify
+docker build -t ops-agent:checkall .
+docker run -d -p 8080:8080 \
+  -v $(pwd)/configs:/app/configs:ro \
+  -v $(pwd)/default.yaml:/app/default.yaml:ro \
+  -e MCP_SERVERS_JSON='[{"name":"MCP1","server_url":"...","token":"..."}]' \
+  ops-agent:checkall
 ```
 
-注意：
-- 通知功能需要同时使用 `--summary` 和 `--notify` 选项
-- 如果未设置 `NOTIFY_URL` 环境变量，程序会跳过通知发送并显示警告
-- 默认情况下不会发送通知，需要明确指定 `--notify` 选项
+**直接运行：**
+
+```bash
+python server.py
+```
+
+服务默认运行在 `http://0.0.0.0:8080`
+
+### API 端点
+
+#### 1. 健康检查
+
+**GET** `/health`
+
+检查服务是否正常运行。
+
+**响应示例：**
+```json
+{
+  "status": "healthy",
+  "service": "ops-agent-checkall",
+  "timestamp": "2024-01-01T12:00:00"
+}
+```
+
+#### 2. 触发任务
+
+**GET** `/trigger`
+
+触发一个任务执行。
+
+**请求示例：**
+```
+GET /trigger?queries=default.yaml&summary=true
+```
+
+**查询参数说明：**
+- `config`: 配置文件路径（可选）
+- `queries`: 查询文件路径（可选，默认为 `default.yaml`）
+- `verbose`: 是否详细日志（可选，true/false，默认 false）
+- `summary`: 是否生成 LLM 总结（可选，true/false，默认 false，不总结）
+
+**响应示例（成功）：**
+```json
+{
+  "success": true,
+  "output": "查询结果内容...",
+  "summary": "AI 总结内容（如果启用了总结）"
+}
+```
+
+**响应示例（失败）：**
+```json
+{
+  "success": false,
+  "error": "错误信息"
+}
+```
+
+**状态码：**
+- `200 OK`: 任务执行成功并返回结果
+- `400 Bad Request`: 请求参数错误（如找不到查询文件）
+- `500 Internal Server Error`: 任务执行失败
+
+### API 使用示例
+
+**使用 curl 触发任务：**
+
+```bash
+# 使用 GET 请求触发任务（默认不总结，直接返回结果）
+curl "http://localhost:8080/trigger?queries=default.yaml"
+
+# 需要总结时，添加 summary=true
+curl "http://localhost:8080/trigger?queries=default.yaml&summary=true"
+
+# 健康检查
+curl http://localhost:8080/health
+```
+
+**使用 Python requests：**
+
+```python
+import requests
+
+# 触发任务（默认不总结，直接返回结果）
+response = requests.get('http://localhost:8080/trigger', params={
+    'queries': 'default.yaml'
+})
+
+result = response.json()
+if result['success']:
+    print(f"Output: {result.get('output', '')}")
+    if result.get('summary'):
+        print(f"Summary: {result['summary']}")
+else:
+    print(f"Error: {result.get('error', '')}")
+
+# 需要总结时
+response = requests.get('http://localhost:8080/trigger', params={
+    'queries': 'default.yaml',
+    'summary': 'true'
+})
+
+result = response.json()
+if result['success']:
+    print(result.get('output', ''))
+    if result.get('summary'):
+        print(f"\n## AI 总结\n{result['summary']}")
+```
+
+**环境变量：**
+
+服务支持以下环境变量：
+
+- `PORT`: HTTP 服务端口（默认：8080）
+- `HOST`: HTTP 服务绑定地址（默认：0.0.0.0）
+- `MCP_SERVERS_JSON`: MCP 服务器配置（JSON 格式）
+- `OPENAI_API_KEY`: OpenAI API 密钥（用于总结功能）
+- `OPENAI_API_HOST`: OpenAI API 主机（默认：https://api.openai.com/v1）
+- `OPENAI_MODEL`: OpenAI 模型名称（默认：gpt-4）
+
+**注意事项：**
+
+1. 任务同步执行，接口会等待任务完成后再返回结果
+2. 如果任务执行时间较长，建议设置合适的 HTTP 超时时间
 
 ## 输出
 
 程序会：
 
 1. 在控制台显示每个查询的执行状态
-2. 使用 LLM 生成总结（除非使用 `--no-summary`）
-3. 将结果保存到 `results.json` 文件
+2. 使用 LLM 生成总结（如果启用了 `--summary`）
+3. 将结果保存到 `results.json` 文件（如果指定了输出文件）
 
 ## 项目结构
 
 ```
 ops-agent-checkall/
 ├── main.py                 # 主程序入口
+├── server.py               # HTTP API 服务
+├── build.sh                # 构建脚本
+├── Dockerfile              # Docker 镜像构建文件
 ├── configs/
 │   └── config.yaml         # 配置文件
-├── queries.yaml            # 查询配置文件
+├── default.yaml            # 默认查询配置文件
 ├── requirements.txt        # Python 依赖
 ├── README.md              # 说明文档
 └── ops_agent/
@@ -202,7 +540,11 @@ ops-agent-checkall/
     ├── core/               # 核心模块
     │   ├── __init__.py
     │   ├── mcp_query_executor.py  # MCP 查询执行器
-    │   └── llm_summarizer.py      # LLM 总结器
+    │   ├── llm_summarizer.py      # LLM 总结器
+    │   └── formatters.py          # 结果格式化器
+    ├── tools/              # 工具模块
+    │   ├── __init__.py
+    │   └── mcp_tool.py     # MCP 工具封装
     └── utils/              # 工具模块
         ├── __init__.py
         └── logging.py
@@ -245,6 +587,7 @@ ops-agent-checkall/
 ```yaml
 queries:
   - tool_name: "get-events-from-ops"
+    mcp_server: "default"
     args:
       subject_pattern: "ops.clusters.>"
       page_size: "10"
@@ -259,11 +602,13 @@ queries:
 queries:
   # SOPS 模块
   - tool_name: "list-sops-from-ops"
+    mcp_server: "default"
     args: {}
     desc: "列出所有可用的 SOPS 操作流程"
   
   # Events 模块
   - tool_name: "get-events-from-ops"
+    mcp_server: "default"
     args:
       subject_pattern: "ops.clusters.*.nodes.*.event"
       page_size: "50"
@@ -271,52 +616,54 @@ queries:
   
   # Logs 模块
   - tool_name: "search-logs-from-elasticsearch"
+    mcp_server: "default"
     args:
-      search_term: "error"
-      size: "50"
+      index: "logs-*"
+      body: '{"query": {"match": {"message": "error"}}}'
     desc: "搜索最近一段时间内的错误日志"
+    formater: "atms-logs-formatter"
   
   # Metrics 模块
   - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "prometheus"
     args:
       query: "up"
     desc: "查询 Prometheus 中所有服务的运行状态"
+    formater: "metrics-formatter"
   
   # Traces 模块
   - tool_name: "get-services-from-jaeger"
+    mcp_server: "default"
     args: {}
     desc: "获取 Jaeger 中所有服务名称"
 ```
 
-### 示例 3: Elasticsearch 日志查询
+### 示例 3: 多 MCP 服务器查询
 
 ```yaml
 queries:
-  # 列出所有索引
-  - tool_name: "list-log-indices-from-elasticsearch"
+  # 使用 prometheus 服务器
+  - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "prometheus"
     args:
-      format: "table"
-      health: "green"
-    group: "logs"
-    description: "List Elasticsearch indices"
+      query: "cpu_usage_percent > 80"
+    desc: "查询 CPU 使用率超过 80% 的节点"
+    formater: "metrics-formatter"
   
-  # 查询特定路径的日志
-  - tool_name: "get-path-logs-from-elasticsearch"
+  # 使用默认服务器
+  - tool_name: "search-logs-from-elasticsearch"
+    mcp_server: "default"
     args:
-      path: "/api/v1/users"
-      method: "GET"
-      status_code: "200"
-      size: "100"
-    group: "logs"
-    description: "Get logs for /api/v1/users endpoint"
+      index: "logs-*"
+      body: '{"query": {"match": {"level": "ERROR"}}}'
+    desc: "搜索错误日志"
+    formater: "atms-logs-formatter"
   
-  # 查询特定 Pod 的日志
-  - tool_name: "get-pod-logs-from-elasticsearch"
+  # 不指定 mcp_server，使用默认服务器
+  - tool_name: "get-events-from-ops"
     args:
-      pod: "my-app-5d8f9b7c4-abc123"
-      size: "50"
-    group: "logs"
-    description: "Get logs for specific pod"
+      subject_pattern: "ops.clusters.>"
+    desc: "获取集群事件"
 ```
 
 ### 示例 4: Prometheus 指标查询
@@ -325,63 +672,36 @@ queries:
 queries:
   # 即时查询
   - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "prometheus"
     args:
       query: "cpu_usage_percent"
-    group: "metrics"
-    description: "Query current CPU usage"
+    desc: "查询当前 CPU 使用率"
+    formater: "metrics-formatter"
   
   # 范围查询
   - tool_name: "query-metrics-range-from-prometheus"
+    mcp_server: "prometheus"
     args:
       query: "rate(http_requests_total[5m])"
       time_range: "1h"
       step: "60s"
-    group: "metrics"
-    description: "Query HTTP request rate over 1 hour"
+    desc: "查询 HTTP 请求速率（1小时范围）"
+    formater: "metrics-formatter"
 ```
 
-### 示例 5: Jaeger 追踪查询
-
-```yaml
-queries:
-  # 获取所有服务
-  - tool_name: "get-services-from-jaeger"
-    args: {}
-    group: "traces"
-    description: "Get all services"
-  
-  # 获取服务的操作列表
-  - tool_name: "get-operations-from-jaeger"
-    args:
-      service: "user-service"
-      spanKind: "server"
-    group: "traces"
-    description: "Get operations for user-service"
-  
-  # 搜索追踪（需要指定时间范围）
-  - tool_name: "find-traces-from-jaeger"
-    args:
-      serviceName: "user-service"
-      startTimeMin: "2024-01-01T00:00:00Z"
-      startTimeMax: "2024-01-01T23:59:59Z"
-      operationName: "GetUser"
-    group: "traces"
-    description: "Find traces for user-service"
-```
-
-### 示例 6: 自定义时间范围
+### 示例 5: 自定义时间范围
 
 如果某个查询需要特定的时间范围，可以在查询中明确指定：
 
 ```yaml
 queries:
   - tool_name: "get-events-from-ops"
+    mcp_server: "default"
     args:
       subject_pattern: "ops.clusters.>"
       start_time: "1758928888000"  # 时间戳格式
       page_size: "10"
-    group: "events"
-    description: "Get events for specific time range"
+    desc: "获取指定时间范围的事件"
 ```
 
 如果查询中已经指定了时间参数，程序不会覆盖它们。
@@ -418,62 +738,17 @@ query:
 
 生成的时间戳使用 ISO 8601 格式（UTC 时间），例如：`2024-01-01T12:00:00Z`
 
-## 通知功能
-
-程序支持在生成 LLM 总结后发送通知到群聊。通知功能是可选的，默认关闭。
-
-### 启用通知
-
-1. **配置通知 URL**（环境变量）：
-```bash
-export NOTIFY_URL="https://your-webhook-url.com"
-# 或
-export NOTIFICATION_URL="https://your-webhook-url.com"
-```
-
-2. **运行程序时启用通知**：
-```bash
-python main.py --summary --notify
-```
-
-### 通知格式
-
-通知使用 Markdown 格式发送，包含完整的 LLM 总结内容。通知会在以下情况发送：
-- 同时使用 `--summary` 和 `--notify` 参数
-- 总结生成成功
-- `NOTIFY_URL` 环境变量已配置
-
-### 通知失败处理
-
-如果通知发送失败，程序会：
-- 在控制台显示警告信息
-- 继续正常完成程序执行
-- 不会影响查询结果和总结的保存
-
-### 使用示例
-
-```bash
-# 只生成总结，不发送通知（默认行为）
-python main.py --summary
-
-# 生成总结并发送通知
-python main.py --summary --notify
-
-# 如果只使用 --notify 但没有 --summary，会提示需要先生成总结
-python main.py --notify  # 会提示需要 --summary
-```
-
 ## 注意事项
 
 1. 确保 MCP 服务器可访问且 token 有效
 2. 确保 OpenAI API 配置正确且有足够的配额
 3. 查询会按顺序执行，如果某个查询失败，会继续执行后续查询
-4. 结果会保存到 `results.json`，包含所有查询结果和总结
+4. 结果会保存到 `results.json`（如果指定了输出文件），包含所有查询结果和总结
 5. 如果查询中已经指定了时间参数，程序不会覆盖它们
 6. 时间范围基于当前 UTC 时间计算
-7. 通知功能是可选的，未配置 `NOTIFY_URL` 时不会发送通知
+7. 多 MCP 服务器配置时，确保每个服务器名称唯一
+8. 如果查询中指定的 `mcp_server` 不存在，会自动回退到 `default` 服务器
 
 ## 许可证
 
 （根据项目需要添加许可证信息）
-

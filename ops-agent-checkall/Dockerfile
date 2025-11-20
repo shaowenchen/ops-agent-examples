@@ -25,7 +25,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 创建必要的目录
-RUN mkdir -p logs configs
+RUN mkdir -p configs
 
 # 设置执行权限
 RUN chmod +x main.py
