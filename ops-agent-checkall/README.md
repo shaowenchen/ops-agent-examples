@@ -1,15 +1,13 @@
 # Ops Agent CheckAll
 
-一个用于执行一系列 MCP 数据查询并使用 LLM 进行总结的工具。
+一个用于执行一系列 MCP 数据查询的工具。
 
 ## 功能特性
 
 - 🔍 **批量 MCP 查询**: 支持执行多个 MCP 查询
-- ⏰ **自动时间范围**: 自动为查询添加默认时间范围（默认最近10分钟，可在配置中修改）
-- 🤖 **LLM 智能总结**: 使用 LLM 对查询结果进行智能分析和总结
 - 📊 **结果可视化**: 使用 Rich 库提供美观的控制台输出
 - ⚙️ **灵活配置**: 支持配置文件和环境变量
-- 📝 **结果保存**: 自动保存查询结果和总结到 JSON 文件
+- 📝 **结果保存**: 自动保存查询结果到 JSON 文件
 - 🛠️ **多模块支持**: 支持 SOPS、Events、Metrics、Logs、Traces 等多个运维模块
 - 🌐 **HTTP API**: 提供 HTTP 服务接口，支持通过 API 触发任务
 - 🔌 **多 MCP 服务器**: 支持配置多个 MCP 服务器，每个查询可指定使用哪个服务器
@@ -30,7 +28,7 @@ pip install -r requirements.txt
 
 ### 1. 配置文件
 
-编辑 `configs/config.yaml` 文件，配置 MCP 服务器和 OpenAI API：
+编辑 `configs/config.yaml` 文件，配置 MCP 服务器：
 
 ```yaml
 # Ops Agent CheckAll Configuration
@@ -58,30 +56,6 @@ mcp_servers:
   #   timeout: "30s"
   #   token: "another-token"
   #   default: false
-
-# OpenAI Configuration
-openai:
-  # OpenAI API key
-  api_key: "your-openai-api-key"
-  
-  # OpenAI API host (for custom endpoints)
-  api_host: "https://api.openai.com/v1"
-  
-  # Model name
-  model: "gpt-4"
-  
-  # Maximum tokens for completion
-  max_tokens: 4000
-
-# Query Configuration
-query:
-  # Default time range for queries (e.g., "10m" for 10 minutes)
-  # This will be automatically added to queries that don't specify time parameters
-  default_time_range: "10m"
-  
-  # Time parameter names to use (comma-separated)
-  # Common options: "start_time,end_time", "since", "duration"
-  time_param_names: "start_time,end_time"
 ```
 
 ### 2. 多 MCP 服务器配置
@@ -193,15 +167,7 @@ queries:
 # MCP 服务器配置（多服务器，列表格式）
 export MCP_SERVERS_JSON='[{"name":"MCP1","server_url":"https://mcp-server-1.com/mcp","timeout":"30s","token":"token1","default":true}]'
 
-# 查询配置
-export QUERY_DEFAULT_TIME_RANGE="10m"
-export QUERY_TIME_PARAM_NAMES="start_time,end_time"
 
-# OpenAI 配置
-export OPENAI_API_KEY="your-openai-api-key"
-export OPENAI_API_HOST="https://api.openai.com/v1"
-export OPENAI_MODEL="gpt-4"
-export OPENAI_MAX_TOKENS="4000"
 ```
 
 #### 环境变量使用场景
@@ -309,10 +275,8 @@ spec:
 - `tool_name`: MCP 工具名称（必需）
 - `mcp_server`: MCP 服务器名称（可选，默认使用 "default" 服务器）
 - `args`: 工具参数（可选）
-- `desc`: 查询描述（可选），用于大模型总结时理解查询目的，例如："最近10分钟 CPU使用率超过50%的节点"
+- `desc`: 查询描述（可选），用于标识查询目的，例如："最近10分钟 CPU使用率超过50%的节点"
 - `formater`: 格式化器名称（可选），用于指定结果格式化方式
-
-**注意**：`desc` 字段是给大模型看的描述，用于帮助 LLM 更好地理解每个查询的目的和上下文，从而生成更准确的总结。
 
 ```yaml
 queries:
@@ -330,12 +294,6 @@ queries:
       query: "up"
     desc: "查询 Prometheus 服务状态"
     formater: "metrics-formatter"
-```
-
-可选：自定义总结提示词：
-
-```yaml
-summary_prompt: "请用中文总结以下查询结果，重点关注..."
 ```
 
 ## 使用方法
@@ -362,12 +320,6 @@ python main.py -q /path/to/default.yaml
 
 ```bash
 python main.py --verbose
-```
-
-### 生成 LLM 总结
-
-```bash
-python main.py --summary
 ```
 
 ## HTTP API 服务
@@ -418,21 +370,19 @@ python server.py
 
 **请求示例：**
 ```
-GET /trigger?queries=default.yaml&summary=true
+GET /trigger?queries=default.yaml
 ```
 
 **查询参数说明：**
 - `config`: 配置文件路径（可选）
 - `queries`: 查询文件路径（可选，默认为 `default.yaml`）
 - `verbose`: 是否详细日志（可选，true/false，默认 false）
-- `summary`: 是否生成 LLM 总结（可选，true/false，默认 false，不总结）
 
 **响应示例（成功）：**
 ```json
 {
   "success": true,
-  "output": "查询结果内容...",
-  "summary": "AI 总结内容（如果启用了总结）"
+  "output": "查询结果内容..."
 }
 ```
 
@@ -454,11 +404,8 @@ GET /trigger?queries=default.yaml&summary=true
 **使用 curl 触发任务：**
 
 ```bash
-# 使用 GET 请求触发任务（默认不总结，直接返回结果）
+# 使用 GET 请求触发任务
 curl "http://localhost:8080/trigger?queries=default.yaml"
-
-# 需要总结时，添加 summary=true
-curl "http://localhost:8080/trigger?queries=default.yaml&summary=true"
 
 # 健康检查
 curl http://localhost:8080/health
@@ -469,30 +416,16 @@ curl http://localhost:8080/health
 ```python
 import requests
 
-# 触发任务（默认不总结，直接返回结果）
+# 触发任务
 response = requests.get('http://localhost:8080/trigger', params={
     'queries': 'default.yaml'
 })
 
 result = response.json()
 if result['success']:
-    print(f"Output: {result.get('output', '')}")
-    if result.get('summary'):
-        print(f"Summary: {result['summary']}")
+    print(result.get('output', ''))
 else:
     print(f"Error: {result.get('error', '')}")
-
-# 需要总结时
-response = requests.get('http://localhost:8080/trigger', params={
-    'queries': 'default.yaml',
-    'summary': 'true'
-})
-
-result = response.json()
-if result['success']:
-    print(result.get('output', ''))
-    if result.get('summary'):
-        print(f"\n## AI 总结\n{result['summary']}")
 ```
 
 **环境变量：**
@@ -502,9 +435,6 @@ if result['success']:
 - `PORT`: HTTP 服务端口（默认：8080）
 - `HOST`: HTTP 服务绑定地址（默认：0.0.0.0）
 - `MCP_SERVERS_JSON`: MCP 服务器配置（JSON 格式）
-- `OPENAI_API_KEY`: OpenAI API 密钥（用于总结功能）
-- `OPENAI_API_HOST`: OpenAI API 主机（默认：https://api.openai.com/v1）
-- `OPENAI_MODEL`: OpenAI 模型名称（默认：gpt-4）
 
 **注意事项：**
 
@@ -516,8 +446,7 @@ if result['success']:
 程序会：
 
 1. 在控制台显示每个查询的执行状态
-2. 使用 LLM 生成总结（如果启用了 `--summary`）
-3. 将结果保存到 `results.json` 文件（如果指定了输出文件）
+2. 将结果保存到 `results.json` 文件
 
 ## 项目结构
 
@@ -540,7 +469,6 @@ ops-agent-checkall/
     ├── core/               # 核心模块
     │   ├── __init__.py
     │   ├── mcp_query_executor.py  # MCP 查询执行器
-    │   ├── llm_summarizer.py      # LLM 总结器
     │   └── formatters.py          # 结果格式化器
     ├── tools/              # 工具模块
     │   ├── __init__.py
@@ -582,7 +510,7 @@ ops-agent-checkall/
 
 ## 示例
 
-### 示例 1: 基本查询（自动添加时间范围）
+### 示例 1: 基本查询
 
 ```yaml
 queries:
@@ -593,8 +521,6 @@ queries:
       page_size: "10"
     desc: "获取所有集群的事件信息"
 ```
-
-注意：如果查询中没有指定时间参数（如 `start_time`, `end_time`, `since` 等），程序会自动根据配置中的 `default_time_range` 添加时间范围参数。
 
 ### 示例 2: 多模块综合查询
 
@@ -704,50 +630,13 @@ queries:
     desc: "获取指定时间范围的事件"
 ```
 
-如果查询中已经指定了时间参数，程序不会覆盖它们。
-
-## 时间范围配置
-
-### 默认时间范围
-
-程序会自动为没有指定时间参数的查询添加默认时间范围。默认值为最近 10 分钟（`10m`），可以在 `config.yaml` 中配置：
-
-```yaml
-query:
-  default_time_range: "10m"  # 支持: "30s", "5m", "1h", "2d" 等格式
-```
-
-### 时间参数名称
-
-默认使用 `start_time` 和 `end_time` 作为时间参数名称。如果你的 MCP 工具使用不同的参数名称，可以在配置中指定：
-
-```yaml
-query:
-  time_param_names: "since"  # 单个参数
-  # 或
-  time_param_names: "from,to"  # 两个参数
-```
-
-### 时间格式
-
-时间范围支持以下格式：
-- `30s` - 30 秒
-- `5m` - 5 分钟
-- `1h` - 1 小时
-- `2d` - 2 天
-
-生成的时间戳使用 ISO 8601 格式（UTC 时间），例如：`2024-01-01T12:00:00Z`
-
 ## 注意事项
 
 1. 确保 MCP 服务器可访问且 token 有效
-2. 确保 OpenAI API 配置正确且有足够的配额
-3. 查询会按顺序执行，如果某个查询失败，会继续执行后续查询
-4. 结果会保存到 `results.json`（如果指定了输出文件），包含所有查询结果和总结
-5. 如果查询中已经指定了时间参数，程序不会覆盖它们
-6. 时间范围基于当前 UTC 时间计算
-7. 多 MCP 服务器配置时，确保每个服务器名称唯一
-8. 如果查询中指定的 `mcp_server` 不存在，会自动回退到 `default` 服务器
+2. 查询会按顺序执行，如果某个查询失败，会继续执行后续查询
+3. 结果会保存到 `results.json`，包含所有查询结果
+4. 多 MCP 服务器配置时，确保每个服务器名称唯一
+5. 如果查询中指定的 `mcp_server` 不存在，会自动回退到 `default` 服务器
 
 ## 许可证
 

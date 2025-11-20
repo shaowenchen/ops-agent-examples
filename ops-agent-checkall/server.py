@@ -15,10 +15,9 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ops_agent.config import ConfigLoader
-from ops_agent.core import MCPQueryExecutor, LLMSummarizer
+from ops_agent.core import MCPQueryExecutor
 from ops_agent.core.formatters import format_query_result
 from ops_agent.utils.logging import setup_logging, get_logger
-from ops_agent.utils.time_utils import add_time_params_to_query
 
 app = Flask(__name__)
 logger = get_logger(__name__)
@@ -47,8 +46,6 @@ def trigger_task():
         config = request.args.get('config')
         queries = request.args.get('queries')
         verbose = request.args.get('verbose', 'false').lower() == 'true'
-        # 默认不总结，可以通过 summary=true 参数覆盖
-        summary = request.args.get('summary', 'false').lower() == 'true'
         
         # 设置日志
         log_level = "DEBUG" if verbose else "INFO"
@@ -84,30 +81,12 @@ def trigger_task():
             queries_config = yaml.safe_load(f)
         
         query_list = queries_config.get('queries', [])
-        summary_prompt = queries_config.get('summary_prompt')
         
         if not query_list:
             return jsonify({
                 "success": False,
                 "error": "No queries found in queries file"
             }), 400
-        
-        # 获取查询配置
-        query_config = config_loader.query_config
-        default_time_range = query_config.default_time_range
-        time_param_names = query_config.time_param_names
-        
-        # 添加默认时间范围
-        modified_queries = []
-        for query in query_list:
-            modified_query = add_time_params_to_query(
-                query,
-                default_time_range,
-                time_param_names
-            )
-            modified_queries.append(modified_query)
-        
-        query_list = modified_queries
         
         # 初始化组件
         query_executor = MCPQueryExecutor(config_loader)
@@ -159,19 +138,10 @@ def trigger_task():
         
         output = "\n".join(output_lines).strip()
         
-        # 生成总结
-        summary_result = None
-        if summary and output:
-            summarizer = LLMSummarizer(config_loader)
-            summary_result = summarizer.summarize(results, summary_prompt)
-            if summary_result:
-                output += f"\n\n## AI 总结\n\n{summary_result}"
-        
         # 直接返回执行结果
         return jsonify({
             "success": True,
-            "output": output,
-            "summary": summary_result
+            "output": output
         }), 200
         
     except Exception as e:

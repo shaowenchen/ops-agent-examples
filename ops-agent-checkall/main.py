@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Main entry point for Ops Agent CheckAll
-Executes a series of MCP queries and generates an LLM summary
+Executes a series of MCP queries
 """
 
 import os
@@ -18,12 +18,9 @@ from rich.markdown import Markdown
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ops_agent.config import ConfigLoader
-from ops_agent.core import MCPQueryExecutor, LLMSummarizer
+from ops_agent.core import MCPQueryExecutor
 from ops_agent.core.formatters import format_query_result
 from ops_agent.utils.logging import setup_logging, get_logger
-from ops_agent.utils.time_utils import add_time_params_to_query
-from ops_agent.utils.notifier import Notifier
-from langchain.schema import HumanMessage, SystemMessage
 
 console = Console()
 logger = get_logger(__name__)
@@ -36,7 +33,7 @@ def print_banner():
     
             Ops Agent CheckAll
     
-            MCP Query Executor & LLM Summarizer
+            MCP Query Executor
     
     ===============================================================
     """
@@ -47,10 +44,8 @@ def print_banner():
 @click.option("-c", "--config", default=None, help="Path to configuration file")
 @click.option("-q", "--queries", default=None, help="Path to queries YAML file")
 @click.option("--verbose", is_flag=True, default=False, help="Enable verbose logging")
-@click.option("--summary", is_flag=True, default=False, help="Generate LLM summary (default: disabled)")
-@click.option("--notify", is_flag=True, default=False, help="Send notification after summary (default: disabled, requires --summary)")
-def run(config, queries, verbose, summary, notify):
-    """Execute MCP queries and generate LLM summary"""
+def run(config, queries, verbose):
+    """Execute MCP queries"""
     # Setup logging
     log_level = "DEBUG" if verbose else "INFO"
     setup_logging(log_level)
@@ -103,29 +98,11 @@ def run(config, queries, verbose, summary, notify):
             queries_config = yaml.safe_load(f)
         
         query_list = queries_config.get('queries', [])
-        summary_prompt = queries_config.get('summary_prompt')
         
         if not query_list:
             console.print("[red]Error: No queries found in queries file[/red]")
             sys.exit(1)
         
-        # Get query configuration for time range
-        query_config = config_loader.query_config
-        default_time_range = query_config.default_time_range
-        time_param_names = query_config.time_param_names
-        
-        # Add default time range to queries that don't have time parameters
-        console.print(f"[cyan]Applying default time range: {default_time_range}[/cyan]")
-        modified_queries = []
-        for query in query_list:
-            modified_query = add_time_params_to_query(
-                query,
-                default_time_range,
-                time_param_names
-            )
-            modified_queries.append(modified_query)
-        
-        query_list = modified_queries
         console.print(f"[green]Found {len(query_list)} query(ies) to execute[/green]\n")
         
         # Initialize components
@@ -246,68 +223,16 @@ def run(config, queries, verbose, summary, notify):
             if verbose:
                 console.print("[dim]Use --verbose to see detailed query results[/dim]")
         
-        # Generate summary if requested
-        final_output = output
-        summary_result = None
-        if summary:
-            console.print("\n")
-            console.print("=" * 80, style="bold cyan")
-            console.print(" " * 25 + "🤖 LLM SUMMARY", style="bold cyan")
-            console.print("=" * 80, style="bold cyan")
-            console.print()
-            
-            console.print("[cyan]Generating summary using LLM...[/cyan]")
-            summarizer = LLMSummarizer(config_loader)
-            
-            # Use output as input for summary
-            if output:
-                # Create a simple prompt with the formatted output
-                summary_input = f"{summary_prompt or '请对以下监控数据进行总结和分析'}\n\n监控数据：\n{output}"
-                summary_result = summarizer.llm.invoke([
-                    SystemMessage(content="你是一个专业的数据分析助手，擅长总结和分析技术数据。"),
-                    HumanMessage(content=summary_input)
-                ]).content
-                final_output = summary_result
-            else:
-                console.print("[yellow]No data available for summary[/yellow]")
-            
-            # Display summary
-            if summary_result:
-                console.print()
-                console.print(Panel(
-                    Markdown(summary_result),
-                    title="[bold]Summary[/bold]",
-                    border_style="cyan",
-                    padding=(1, 2)
-                ))
-        
         # Save results to file
         output_file = "results.json"
         with open(output_file, 'w', encoding='utf-8') as f:
             output_data = {
                 "queries": results,
-                "summary": summary_result
+                "output": output
             }
             json.dump(output_data, f, ensure_ascii=False, indent=2)
         
         console.print(f"\n[green]Results saved to: {output_file}[/green]")
-        
-        # Overall summary
-        
-        # Send notification if requested
-        if notify:
-            if final_output:
-                console.print("\n[cyan]Sending notification...[/cyan]")
-                notifier = Notifier()
-                notify_result = notifier.send_notification(final_output)
-                
-                if notify_result.get('success'):
-                    console.print("[green]✓ Notification sent successfully[/green]")
-                else:
-                    error = notify_result.get('error', 'Unknown error')
-                    console.print(f"[yellow]⚠ Notification failed: {error}[/yellow]")
-            else:
-                console.print("\n[yellow]⚠ Notification requested but no content available[/yellow]")
         
     except Exception as e:
         console.print(f"\n[red]Error: {str(e)}[/red]\n", style="bold")

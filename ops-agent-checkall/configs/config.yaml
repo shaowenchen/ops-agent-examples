@@ -24,17 +24,3 @@ mcp_servers:
   #   token: "another-token"
   #   default: false
 
-# OpenAI Configuration
-openai:
-  # OpenAI API key
-  api_key: "your-openai-api-key"
-  
-  # OpenAI API host (for custom endpoints)
-  api_host: "https://api.openai.com/v1"
-  
-  # Model name
-  model: "gpt-4"
-  
-  # Maximum tokens for completion
-  max_tokens: 4000
-

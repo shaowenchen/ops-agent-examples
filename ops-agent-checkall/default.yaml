@@ -1,9 +1,3 @@
-summary_prompt: |
-  请对以下所有查询结果进行总结和分析。总结应该包括：
-  1. 集群维度
-  2. 节点维度
-  3. 应用维度
-  请用中文回答，简洁明了给出目前系统可能存在的问题。
 queries:
   - tool_name: "query-metrics-from-prometheus"
     mcp_server: "sre"
@@ -15,7 +9,13 @@ queries:
     mcp_server: "kce"
     args:
       query: "sort_desc(sum by (destination_app) (rate(istio_requests_total{response_code=~'5.*', destination_app!~'unknown', destination_workload_namespace!~'unknown'}[5m]))) > 1"
-    desc: "应用 5xx 高的服务(qps)"
+    desc: "应用 5xx 状态码的服务(qps)"
+    formater: "metrics-formatter"
+  - tool_name: "query-metrics-from-prometheus"
+    mcp_server: "kce"
+    args:
+      query: 'sort_desc(sum by (destination_app) (rate(istio_requests_total{response_code=~"499", destination_app!~"unknown", destination_workload_namespace!~"unknown"}[5m]))) > 1'
+    desc: "应用 499 状态码的服务(qps)"
     formater: "metrics-formatter"
   - tool_name: "query-metrics-from-prometheus"
     mcp_server: "kce"
@@ -56,15 +56,14 @@ queries:
   - tool_name: "search-logs-from-elasticsearch"
     mcp_server: "default"
     args:
-      index: "atms-filebeat-7.14.1-*"
-      body: '{"size":0,"query":{"bool":{"must":[{"range":{"@timestamp":{"gt":"now-5m"}}},{"term":{"level":"ERROR"}}]}},"aggs":{"error_by_node":{"terms":{"field":"k8s.node","size":20,"order":{"_count":"desc"}}}}}'
-    desc: "应用错误日志分布统计(条)"
-    formater: "atms-logs-formatter"
+      index: "ingress-filebeat-7.14.1-*"
+      body: '{"size":20,"query":{"bool":{"must":[{"range":{"@timestamp":{"gt":"now-5m"}}},{"range":{"response_code":{"gte":500,"lte":599}}}]}},"_source":["@timestamp","response_code","k8s.node","k8s.pod","request_uri","upstream_status","upstream_addr"],"sort":[{"@timestamp":{"order":"desc"}}]}'
+    desc: "网关5xx错误节点分布(条)"
+    formater: "ingress-logs-formatter"
   - tool_name: "search-logs-from-elasticsearch"
     mcp_server: "default"
     args:
-      index: "ingress-filebeat-7.14.1-*"
-      body: '{"size":20,"query":{"bool":{"must":[{"range":{"@timestamp":{"gt":"now-5m"}}},{"range":{"response_code":{"gte":500,"lte":599}}}]}},"_source":["@timestamp","response_code","k8s.node","k8s.pod","request_uri","upstream_status","upstream_addr"],"sort":[{"@timestamp":{"order":"desc"}}]}'
-    desc: "网关5xx错误分布统计(条)"
-    formater: "ingress-logs-formatter"
-
+      index: "atms-filebeat-7.14.1-*"
+      body: '{"size":0,"query":{"bool":{"must":[{"range":{"@timestamp":{"gt":"now-5m"}}},{"term":{"level":"ERROR"}}]}},"aggs":{"error_by_node":{"terms":{"field":"k8s.node","size":20,"order":{"_count":"desc"}}}}}'
+    desc: "应用错误节点分布(条)"
+    formater: "atms-logs-formatter"

@@ -19,22 +19,6 @@ class MCPConfig:
     token: str
 
 
-@dataclass
-class QueryConfig:
-    """Query configuration"""
-    default_time_range: str
-    time_param_names: Optional[str] = None
-
-
-@dataclass
-class OpenAIConfig:
-    """OpenAI API configuration"""
-    api_key: str
-    api_host: str
-    model: str
-    max_tokens: Optional[int] = None
-
-
 class ConfigLoader:
     """Configuration loader for Ops Agent CheckAll"""
     
@@ -65,8 +49,6 @@ class ConfigLoader:
         self._config = None
         self._mcp_config = None
         self._mcp_servers = None  # 存储多个 MCP 服务器配置
-        self._openai_config = None
-        self._query_config = None
     
     def load_config(self) -> Dict[str, Any]:
         """Load configuration from file or environment variables"""
@@ -178,34 +160,6 @@ class ConfigLoader:
                     logger.debug(f"  - {name}: {server_url}")
         
         self._config['mcp_servers'] = mcp_servers_dict
-        
-        # OpenAI configuration
-        if not self._config.get('openai'):
-            self._config['openai'] = {}
-        
-        self._config['openai']['api_key'] = os.environ.get('OPENAI_API_KEY', 
-                                                           self._config['openai'].get('api_key', ''))
-        self._config['openai']['api_host'] = os.environ.get('OPENAI_API_HOST', 
-                                                            self._config['openai'].get('api_host', ''))
-        self._config['openai']['model'] = os.environ.get('OPENAI_MODEL', 
-                                                         self._config['openai'].get('model', 'gpt-4'))
-        
-        max_tokens_str = os.environ.get('OPENAI_MAX_TOKENS', 
-                                        self._config['openai'].get('max_tokens'))
-        if max_tokens_str:
-            try:
-                self._config['openai']['max_tokens'] = int(max_tokens_str)
-            except (ValueError, TypeError):
-                self._config['openai']['max_tokens'] = None
-        
-        # Query configuration
-        if not self._config.get('query'):
-            self._config['query'] = {}
-        
-        self._config['query']['default_time_range'] = os.environ.get('QUERY_DEFAULT_TIME_RANGE',
-                                                                     self._config['query'].get('default_time_range', '10m'))
-        self._config['query']['time_param_names'] = os.environ.get('QUERY_TIME_PARAM_NAMES',
-                                                                    self._config['query'].get('time_param_names'))
     
     @property
     def mcp_config(self) -> MCPConfig:
@@ -289,36 +243,4 @@ class ConfigLoader:
             servers['default'] = self.get_mcp_config('default')
         
         return servers
-    
-    @property
-    def openai_config(self) -> OpenAIConfig:
-        """Get OpenAI configuration"""
-        if not self._openai_config:
-            if not self._config:
-                self.load_config()
-            
-            openai_config = self._config.get('openai', {})
-            self._openai_config = OpenAIConfig(
-                api_key=openai_config.get('api_key', ''),
-                api_host=openai_config.get('api_host', ''),
-                model=openai_config.get('model', 'gpt-4'),
-                max_tokens=openai_config.get('max_tokens')
-            )
-        
-        return self._openai_config
-    
-    @property
-    def query_config(self) -> QueryConfig:
-        """Get query configuration"""
-        if not self._query_config:
-            if not self._config:
-                self.load_config()
-            
-            query_config = self._config.get('query', {})
-            self._query_config = QueryConfig(
-                default_time_range=query_config.get('default_time_range', '10m'),
-                time_param_names=query_config.get('time_param_names')
-            )
-        
-        return self._query_config
 
