@@ -222,18 +222,18 @@ def run(config, queries, verbose, summary, notify):
                 formater_name = result.get('formater')
                 formatted_result = format_query_result(result_data, formatter_name=formater_name, tool_name=tool_name)
                 
-                # 如果格式化后的结果为空，跳过整个查询项（包括 desc）
-                if not formatted_result or not formatted_result.strip():
-                    console.print(f"[yellow]No data found for {tool_name}, skipping...[/yellow]\n")
-                    continue
-                
-                # 有数据才输出 desc 和结果
+                # 总是输出 desc，即使结果为空
                 if desc:
                     output_lines.append(f"### {desc}")
                     output_lines.append("")
                 
-                output_lines.append(formatted_result)
-                output_lines.append("")
+                # 如果有格式化结果，输出结果
+                if formatted_result and formatted_result.strip():
+                    output_lines.append(formatted_result)
+                    output_lines.append("")
+                else:
+                    # 即使没有数据，也保留空行以保持格式
+                    output_lines.append("")
         
         # Combine all formatted results into output
         output = "\n".join(output_lines).strip()
