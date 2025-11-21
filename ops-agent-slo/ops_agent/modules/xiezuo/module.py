@@ -141,6 +141,12 @@ class XieZuoModule(BaseModule):
             logger.debug(f"Webhook URL: {webhook_url[:80]}...")
             logger.debug(f"Content length: {len(content)}")
             
+            # 打印通知内容
+            logger.info("Xiezuo notification content:")
+            logger.info("-" * 80)
+            logger.info(content)
+            logger.info("-" * 80)
+            
             # Build request body (markdown format)
             request_body = {
                 "msgtype": "markdown",
