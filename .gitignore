@@ -20,7 +20,7 @@ wheels/
 .installed.cfg
 *.egg
 results.json
-
+*.original
 # Virtual Environment
 venv/
 env/
