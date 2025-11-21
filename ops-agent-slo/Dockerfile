@@ -28,7 +28,7 @@ COPY . .
 RUN mkdir -p configs logs
 
 # 设置执行权限
-RUN chmod +x main.py server.py run.py
+RUN chmod +x main.py server.py sla.py
 
 # 暴露端口
 EXPOSE 8080
