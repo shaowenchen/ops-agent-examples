@@ -8,7 +8,7 @@
 - 🔄 **参数传递和复用**: 模块间通过共享上下文传递参数和数据
 - 🎯 **工作流编排**: 支持复杂的工作流定义，包括条件执行和结果复用
 - 🔌 **MCP 集成**: 支持调用多个 MCP 服务器
-- 🤖 **LLM 支持**: 预留 LLM 接口（可扩展）
+- 🤖 **LLM 支持**: 完整的 LLM 交互模块，支持 WPS AI Gateway 和其他 LLM 提供商，可用于智能分析和决策
 - 🌐 **HTTP API**: 提供 HTTP 服务接口，支持通过 API 触发工作流
 - 📊 **结果可视化**: 使用 Rich 库提供美观的控制台输出
 
@@ -42,6 +42,9 @@ ops-agent-slo/
     │   └── error_log_query/ # 异常日志查询模块
     │       ├── __init__.py
     │       └── module.py
+    │   └── llm_chat/         # LLM 交互模块
+    │       ├── __init__.py
+    │       └── module.py
     ├── tools/              # 工具模块
     │   ├── __init__.py
     │   └── mcp_tool.py     # MCP 工具封装
@@ -66,7 +69,7 @@ pip install -r requirements.txt
 
 ### 1. 配置文件
 
-编辑 `configs/config.yaml` 文件，配置 MCP 服务器：
+编辑 `configs/config.yaml` 文件，配置 MCP 服务器和 LLM：
 
 ```yaml
 # Ops Agent SLO Configuration
@@ -80,10 +83,57 @@ mcp_servers:
     default: true
 
 # LLM Configuration (optional)
-# llm:
-#   provider: "openai"
-#   api_key: "your-api-key"
-#   model: "gpt-4"
+llm:
+  token: "your-llm-token-here"
+  url: "http://your-llm-gateway.com/api/v2/llm/chat"
+  provider: "azure"
+  model: "gpt-4o"
+  temperature: 0
+  headers_json: '{"CUSTOM-HEADER-NAME-1":"value1","CUSTOM-HEADER-NAME-2":"value2","CUSTOM-HEADER-NAME-3":"value3"}'
+```
+
+### 1.1 环境变量配置
+
+环境变量会覆盖配置文件中的设置。支持的环境变量：
+
+**LLM 相关：**
+- `LLM_TOKEN`: LLM API token（覆盖 config 中的 `llm.token`）
+- `LLM_URL`: LLM API URL（覆盖 config 中的 `llm.url`）
+- `LLM_HEADERS_JSON`: LLM 请求头（JSON 字符串格式，覆盖 config 中的 `llm.headers_json`）
+
+**配置示例：**
+
+```bash
+# 设置 LLM token
+export LLM_TOKEN="your-llm-token"
+
+# 设置 LLM URL
+export LLM_URL="http://your-llm-gateway.com/api/v2/llm/chat"
+
+# 设置 LLM headers（JSON 字符串格式）
+export LLM_HEADERS_JSON='{"CUSTOM-HEADER-NAME-1":"value1","CUSTOM-HEADER-NAME-2":"value2","CUSTOM-HEADER-NAME-3":"value3"}'
+```
+
+**注意：** `LLM_HEADERS_JSON` 必须是有效的 JSON 字符串。如果包含特殊字符，建议使用单引号包裹整个 JSON 字符串。
+
+**Docker 中使用：**
+
+```bash
+docker run -e LLM_TOKEN="your-token" \
+  -e LLM_URL="http://your-llm-gateway.com/api/v2/llm/chat" \
+  -e LLM_HEADERS_JSON='{"CUSTOM-HEADER-NAME-1":"value1","CUSTOM-HEADER-NAME-2":"value2","CUSTOM-HEADER-NAME-3":"value3"}' \
+  ops-agent-slo:latest
+```
+
+**Docker Compose 中使用：**
+
+```yaml
+services:
+  ops-agent-slo:
+    environment:
+      - LLM_TOKEN=your-llm-token
+      - LLM_URL=http://your-llm-gateway.com/api/v2/llm/chat
+      - LLM_HEADERS_JSON={"CUSTOM-HEADER-NAME-1":"value1","CUSTOM-HEADER-NAME-2":"value2","CUSTOM-HEADER-NAME-3":"value3"}
 ```
 
 ### 2. 编写执行代码
@@ -136,16 +186,70 @@ def main():
 
 ### 基本用法
 
+直接运行主程序，它会执行 `run.py` 中定义的模块组合逻辑：
+
 ```bash
 python main.py
 ```
 
-### 指定配置文件
+或者直接运行：
 
 ```bash
-python main.py -c /path/to/config.yaml
+python run.py
 ```
 
+### 默认执行流程
+
+默认情况下，`run.py` 会执行以下流程：
+
+1. **查询 Upstream 信息** - 查询指定服务的 upstream 配置
+2. **查询错误日志** - 基于服务名称查询异常日志
+3. **LLM 智能分析** - 使用 LLM 模块分析前面两个模块的结果，生成分析报告
+
+### 执行示例输出
+
+```
+Upstream query result: success
+Service: qingqiu
+Upstreams found: 5
+
+Error log query result: success
+Total errors: 12
+
+================================================================================
+调用 LLM 模块进行分析...
+================================================================================
+
+✅ LLM 分析结果:
+--------------------------------------------------------------------------------
+根据监控数据分析，服务 qingqiu 当前状态如下：
+
+1. Upstream 配置正常，共发现 5 个 upstream 节点
+2. 发现 12 条错误日志，建议进一步排查...
+
+Token 使用情况: 256 tokens
+```
+
+### 编辑执行代码
+
+直接编辑 `run.py` 文件，在 `main()` 函数中编写你的代码来组合模块：
+
+```python
+def main():
+    # 初始化配置和编排器
+    config_loader = ConfigLoader()
+    config_loader.load_config()
+    
+    orchestrator = Orchestrator(config_loader)
+    
+    # 注册模块
+    orchestrator.register_module(UpstreamQueryModule())
+    orchestrator.register_module(ErrorLogQueryModule())
+    orchestrator.register_module(LLMChatModule())
+    
+    # 直接调用模块并组合
+    # 你的代码...
+```
 
 ### 详细日志
 
@@ -168,7 +272,11 @@ docker build -t ops-agent-slo:latest .
 docker run -d \
   -p 8080:8080 \
   -v $(pwd)/configs:/app/configs:ro \
+  -v $(pwd)/run.py:/app/run.py:rw \
   -e MCP_SERVERS_JSON='[{"name":"MCP1","server_url":"...","token":"..."}]' \
+  -e LLM_TOKEN="your-llm-token" \
+  -e LLM_URL="http://your-llm-gateway.com/api/v2/llm/chat" \
+  -e LLM_HEADERS_JSON='{"CUSTOM-HEADER-NAME-1":"value1","CUSTOM-HEADER-NAME-2":"value2","CUSTOM-HEADER-NAME-3":"value3"}' \
   ops-agent-slo:latest
 
 # 或者直接执行 main.py（一次性执行）
@@ -176,6 +284,8 @@ docker run --rm \
   -v $(pwd)/configs:/app/configs:ro \
   -v $(pwd)/run.py:/app/run.py:rw \
   -e MCP_SERVERS_JSON='[{"name":"MCP1","server_url":"...","token":"..."}]' \
+  -e LLM_TOKEN="your-llm-token" \
+  -e LLM_HEADERS_JSON='{"CUSTOM-HEADER-NAME-1":"value1","CUSTOM-HEADER-NAME-2":"value2","CUSTOM-HEADER-NAME-3":"value3"}' \
   ops-agent-slo:latest python main.py
 ```
 
@@ -196,6 +306,9 @@ services:
       - ./run.py:/app/run.py:rw
     environment:
       - MCP_SERVERS_JSON=[{"name":"MCP1","server_url":"...","token":"..."}]
+      - LLM_TOKEN=your-llm-token
+      - LLM_URL=http://your-llm-gateway.com/api/v2/llm/chat
+      - LLM_HEADERS_JSON={"CUSTOM-HEADER-NAME-1":"value1","CUSTOM-HEADER-NAME-2":"value2","CUSTOM-HEADER-NAME-3":"value3"}
     restart: unless-stopped
 ```
 
@@ -226,36 +339,109 @@ python server.py
 
 **GET/POST** `/trigger`
 
-触发一个工作流执行。
+触发执行分析流程。支持两种模式：
+1. 如果提供 `data` 和 `key` 参数，执行完整的分析流程
+2. 如果不提供，执行 `run.py` 中的默认代码
 
 **请求示例（GET）：**
 ```
 GET /trigger?verbose=false
 ```
 
-**请求示例（POST）：**
+**请求示例（POST - 带 data 和 key）：**
+```json
+{
+  "data": "分析内容或数据",
+  "key": "标识键，用于区分不同的分析类型",
+  "verbose": false
+}
+```
+
+**请求示例（POST - 不带参数，执行 run.py）：**
 ```json
 {
   "verbose": false
 }
 ```
 
-注意：API 会执行 `run.py` 中的代码。
+**参数说明：**
+- `data` (可选): 分析内容或数据，会传递给 LLM 进行分析
+- `key` (可选): 标识键，用于区分不同的分析类型
+  - 如果 `key` 以 `service_` 开头，会自动提取服务名称并执行完整的监控分析流程
+  - 其他 `key` 值会直接使用 LLM 分析 `data` 内容
+- `verbose` (可选): 是否启用详细日志，默认 false
 
-**响应示例：**
+**响应示例（带 data 和 key）：**
 ```json
 {
   "success": true,
-  "summary": {
-    "total": 2,
-    "success": 2,
-    "failed": 0,
-    "skipped": 0,
-    "success_rate": 1.0
+  "key": "service_qingqiu",
+  "results": {
+    "upstream": {
+      "module_name": "upstream_query",
+      "status": "success",
+      "data": {...}
+    },
+    "error_log": {
+      "module_name": "error_log_query",
+      "status": "success",
+      "data": {...}
+    },
+    "llm_analysis": {
+      "module_name": "llm_chat",
+      "status": "success",
+      "data": {
+        "output": "分析结果...",
+        "usage": {...}
+      }
+    }
   },
-  "results": [...],
   "context": {...}
 }
+```
+
+**响应示例（不带参数）：**
+```json
+{
+  "success": true,
+  "results": {
+    "output": "执行输出..."
+  },
+  "context": {...}
+}
+```
+
+**分析流程（当提供 data 和 key 时）：**
+1. 如果 `key` 以 `service_` 开头：
+   - 提取服务名称（从 key 中，如 `service_qingqiu` → `qingqiu`）
+   - 执行 upstream 查询
+   - 执行错误日志查询
+   - 将查询结果和接收到的 `data` 一起传递给 LLM 进行综合分析
+2. 其他情况：
+   - 直接使用 LLM 分析接收到的 `data` 内容
+
+**使用示例：**
+```bash
+# 服务分析（完整流程）
+curl -X POST http://localhost:8080/trigger \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": "请分析服务 qingqiu 的健康状况",
+    "key": "service_qingqiu"
+  }'
+
+# 直接 LLM 分析
+curl -X POST http://localhost:8080/trigger \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": "分析这段日志数据...",
+    "key": "log_analysis"
+  }'
+
+# 执行 run.py 默认流程
+curl -X POST http://localhost:8080/trigger \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
 
 ## 模块开发
@@ -410,6 +596,110 @@ def check_service(service_name):
 - `time_range`: 时间范围（可选）
 - `use_context`: 是否使用上下文中的 service_name（可选）
 
+### 3. LLM Chat Module
+
+与 LLM 模型交互，支持 WPS AI Gateway 和其他 LLM 提供商。可用于智能分析、决策支持、报告生成等场景。
+
+**参数：**
+- `input`: 用户输入文本（必需，如果未提供 messages）
+- `messages`: 消息列表（可选，input 的替代方案）
+- `prompt`: 系统提示词（可选）
+- `history`: 聊天历史（可选，可从上下文获取）
+- `token`: API token（可选，可从配置或环境变量读取）
+- `url`: LLM API URL（可选，可从配置或环境变量读取）
+- `model`: 模型名称（可选，默认："gpt-4o"）
+- `provider`: 提供商名称（可选，默认："azure"）
+- `temperature`: 温度参数（可选，默认：0）
+- `use_context`: 是否使用上下文中的历史（可选，默认：False）
+- `context_key`: 从上下文获取历史的键名（可选，默认："llm_history"）
+- `headers`: 自定义 HTTP 头（可选，会覆盖配置和环境变量）
+
+**配置优先级：**
+- `params` > 环境变量 > `config.yaml`
+- Token: `params.token` > `LLM_TOKEN` > `config.llm.token`
+- URL: `params.url` > `LLM_URL` > `config.llm.url`
+- Headers: `params.headers` > `LLM_HEADERS_JSON` > `config.llm.headers_json`
+
+**使用示例：**
+
+```python
+# 基本使用（token 和 url 从配置读取）
+llm_result = orchestrator.execute_module(
+    "llm_chat",
+    params={
+        "input": "分析服务 qingqiu 的健康状况",
+        "prompt": "你是一个运维专家"
+    }
+)
+
+# 使用上下文历史进行连续对话
+llm_result = orchestrator.execute_module(
+    "llm_chat",
+    params={
+        "input": "继续分析",
+        "use_context": True,  # 使用上下文中的对话历史
+    }
+)
+
+# 结合其他模块的结果进行智能分析
+upstream_result = orchestrator.execute_module(
+    "upstream_query",
+    params={"service_name": "qingqiu"}
+)
+
+error_log_result = orchestrator.execute_module(
+    "error_log_query",
+    params={"service_name": "qingqiu", "time_range": "1h"}
+)
+
+# 将多个模块的结果传递给 LLM 进行综合分析
+analysis_prompt = f"""请分析服务 qingqiu 的监控情况：
+
+1. Upstream 状态: {upstream_result.status.value}
+   - Upstream 数量: {upstream_result.data.get('upstream_info', {}).get('summary', {}).get('total_upstreams', 0) if upstream_result.data else 0}
+
+2. 错误日志状态: {error_log_result.status.value}
+   - 错误总数: {error_log_result.data.get('logs', {}).get('summary', {}).get('total_errors', 0) if error_log_result.data else 0}
+
+请给出简要的分析和建议。"""
+
+llm_result = orchestrator.execute_module(
+    "llm_chat",
+    params={
+        "input": analysis_prompt,
+        "prompt": "你是一个专业的运维专家，擅长分析服务监控数据和故障排查。请用简洁明了的语言回答问题。"
+    }
+)
+
+if llm_result.status.value == "success":
+    print(f"分析结果: {llm_result.data.get('output')}")
+    print(f"Token 使用: {llm_result.data.get('usage', {}).get('total_tokens', 0)}")
+```
+
+**完整工作流示例：**
+
+```python
+# 1. 查询服务信息
+upstream_result = orchestrator.execute_module("upstream_query", ...)
+
+# 2. 查询错误日志
+error_log_result = orchestrator.execute_module("error_log_query", ...)
+
+# 3. LLM 智能分析
+llm_result = orchestrator.execute_module(
+    "llm_chat",
+    params={
+        "input": f"分析服务监控数据：{upstream_result.data} 和 {error_log_result.data}",
+        "prompt": "你是运维专家"
+    }
+)
+
+# 4. 根据 LLM 分析结果决定下一步操作
+if llm_result.status.value == "success":
+    analysis = llm_result.data.get('output')
+    # 根据分析结果执行后续操作...
+```
+
 ## 输出
 
 程序会：
@@ -417,12 +707,66 @@ def check_service(service_name):
 1. 在控制台显示工作流执行状态和结果
 2. 将结果保存到 `results.json` 文件
 
+## 完整使用示例
+
+### 示例：服务健康检查和分析
+
+```python
+# run.py 中的完整示例
+def main():
+    setup_logging("INFO")
+    
+    config_loader = ConfigLoader()
+    config_loader.load_config()
+    
+    orchestrator = Orchestrator(config_loader)
+    orchestrator.set_context('config_loader', config_loader)
+    
+    # 注册所有模块
+    orchestrator.register_module(UpstreamQueryModule())
+    orchestrator.register_module(ErrorLogQueryModule())
+    orchestrator.register_module(LLMChatModule())
+    
+    # 1. 查询 upstream 信息
+    upstream_result = orchestrator.execute_module(
+        "upstream_query",
+        params={"service_name": "qingqiu"}
+    )
+    
+    # 2. 查询错误日志
+    service_name = orchestrator.get_context('last_queried_service', 'qingqiu')
+    error_log_result = orchestrator.execute_module(
+        "error_log_query",
+        params={"service_name": service_name, "time_range": "1h"}
+    )
+    
+    # 3. LLM 智能分析
+    llm_input = f"""分析服务 {service_name}：
+    - Upstream: {upstream_result.status.value}
+    - 错误日志: {error_log_result.data.get('logs', {}).get('summary', {})}
+    请给出分析和建议。"""
+    
+    llm_result = orchestrator.execute_module(
+        "llm_chat",
+        params={
+            "input": llm_input,
+            "prompt": "你是运维专家"
+        }
+    )
+    
+    # 4. 输出结果
+    if llm_result.status.value == "success":
+        print(f"✅ 分析完成: {llm_result.data.get('output')}")
+```
+
 ## 注意事项
 
-1. 确保 MCP 服务器可访问且 token 有效
-2. 模块按顺序执行，如果某个模块失败，可以配置是否继续
-3. 结果会保存到 `results.json`，包含所有模块结果和上下文
-4. 模块间通过共享上下文传递数据，注意键名冲突
+1. **MCP 服务器配置**: 确保 MCP 服务器可访问且 token 有效
+2. **LLM 配置**: 确保配置了 LLM token 和 URL（在 `config.yaml` 或环境变量中）
+3. **模块执行顺序**: 模块按代码顺序执行，如果某个模块失败，可以添加条件判断决定是否继续
+4. **上下文数据**: 模块间通过共享上下文传递数据，注意键名冲突
+5. **环境变量优先级**: 环境变量会覆盖配置文件中的设置，适合生产环境使用
+6. **LLM Token 使用**: LLM 模块会返回 token 使用情况，可用于监控和成本控制
 
 ## 许可证
 
